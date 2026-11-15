@@ -1,6 +1,6 @@
 # exif-inspect
 
-A small command-line tool that prints the EXIF metadata of images and points out details worth a closer look in a forensic examination.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs.
 
 ## What it reports
 
@@ -63,6 +63,26 @@ Example output:
 
 The exit code is `1` when any file could not be read, `0` otherwise.
 
+## Error level analysis (ELA)
+
+```bash
+exif-inspect ela photo.jpg                    # writes photo_ela.png
+exif-inspect ela --side-by-side photo.jpg     # original and heatmap in one image
+exif-inspect ela -q 95 --gray -o out.png photo.jpg
+```
+
+| Option | Meaning |
+|---|---|
+| `-q`, `--quality` | JPEG quality used for the re-save (default 90) |
+| `-o`, `--output` | Output PNG path (single image only) |
+| `--scale` | Fixed amplification; by default the 99.5th percentile of the error maps to full brightness |
+| `--gray` | Grayscale heatmap |
+| `--side-by-side` | Original on the left, heatmap on the right |
+
+**How it works.** Each JPEG save discards some information, and repeated saves discard less and less. ELA re-saves the image once at a fixed quality and measures how much every pixel changes. Areas that share the image's compression history change by similar amounts; an area pasted in from another source often changes more and shows up brighter.
+
+**Reading the heatmap.** Edges and fine texture always show higher error, while smooth areas such as sky stay dark. Compare regions of similar texture and look for one that stands out from its neighbours. The signal weakens or disappears when an image has been re-saved many times, saved at very high quality, converted from PNG, screenshotted, or recompressed by a social-media platform, so ELA works as a screening aid alongside other evidence.
+
 ## Tests
 
 ```bash
@@ -74,7 +94,6 @@ The tests build their own sample images, so no real photos are stored in the rep
 
 ## Roadmap
 
-- Error level analysis (ELA) heatmaps
 - JPEG quantisation table fingerprinting
 - XMP and IPTC metadata
 

@@ -54,10 +54,70 @@ def _print_text(report, findings, show_all: bool) -> None:
     print()
 
 
+def ela_main(argv: list[str]) -> int:
+    # Imported here so the metadata command stays fast to start.
+    from pathlib import Path
+
+    from .ela import run_ela, side_by_side
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect ela",
+        description="Write an error level analysis (ELA) heatmap for each image.",
+    )
+    parser.add_argument("images", nargs="+", help="image files (JPEG works best)")
+    parser.add_argument("-q", "--quality", type=int, default=90,
+                        help="JPEG quality used for the re-save (default: 90)")
+    parser.add_argument("-o", "--output",
+                        help="output PNG path (single image only; "
+                             "default: <name>_ela.png next to the input)")
+    parser.add_argument("--scale", type=float,
+                        help="fixed amplification factor (default: automatic)")
+    parser.add_argument("--gray", action="store_true",
+                        help="grayscale heatmap")
+    parser.add_argument("--side-by-side", action="store_true",
+                        help="put the original image left of the heatmap")
+    args = parser.parse_args(argv)
+
+    if not 1 <= args.quality <= 100:
+        parser.error("--quality must be between 1 and 100")
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        try:
+            result = run_ela(src, args.quality, args.scale, args.gray)
+        except Exception as exc:  # unreadable or not an image
+            print(f"== {src}\n   error  : {exc}\n")
+            exit_code = 1
+            continue
+
+        out_img = side_by_side(src, result.heatmap) if args.side_by_side else result.heatmap
+        out_path = Path(args.output) if args.output else src.with_name(f"{src.stem}_ela.png")
+        out_img.save(out_path)
+
+        print(f"== {src}")
+        print(f"   output : {out_path}")
+        print(f"   error  : mean {result.mean_error}, max {result.max_error}, "
+              f"amplified x{result.scale}")
+        if result.source_format != "JPEG":
+            print(f"   note   : source is {result.source_format}; "
+                  "ELA is designed for JPEG and may be uninformative here")
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
+    argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "ela":
+        return ela_main(argv[1:])
+
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
+        epilog="Subcommands: 'exif-inspect ela IMAGE' writes an error level "
+               "analysis heatmap (see 'exif-inspect ela --help').",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
