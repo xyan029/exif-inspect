@@ -27,6 +27,8 @@ For each file:
 | `ai_generated_marker` | The IPTC digital source type is `trainedAlgorithmicMedia` (made by generative AI) |
 | `ai_composite_marker` | The IPTC digital source type is `compositeWithTrainedAlgorithmicMedia` (AI combined with other content) |
 | `jpeg_tables` | Which JPEG quantization tables the encoder used: standard libjpeg tables with the exact quality, or a custom table with its fingerprint |
+| `makernote_missing` | EXIF names a camera but carries no MakerNote, the vendor block every camera and phone writes |
+| `tables_contradict_exif` | EXIF names a camera, but the quantization tables belong to other software (WeChat, Apple ImageIO, standard libjpeg) |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals

@@ -173,3 +173,41 @@ def test_wechat_quality_hint(tmp_path):
     assert report.jpeg_quant.standard and "WeChat" in report.jpeg_quant.known_as
     msg = next(f.message for f in run_checks(report) if f.code == "jpeg_tables")
     assert "Consistent with WeChat" in msg
+
+
+# --- EXIF vs encoder consistency ------------------------------------------
+
+def _forged(path, quality, make="Canon", model="Canon EOS R5", makernote=None, **save):
+    exif = Image.Exif()
+    exif[0x010F] = make
+    exif[0x0110] = model
+    if makernote is not None:
+        exif.get_ifd(0x8769)[0x927C] = makernote
+    if "qtables" not in save:
+        save["quality"] = quality  # Pillow lets quality override qtables
+    Image.new("RGB", (64, 48), "gray").save(path, "JPEG", exif=exif, **save)
+
+
+def test_camera_claim_on_wechat_tables(tmp_path):
+    path = tmp_path / "fake.jpg"
+    _forged(path, 76)
+    codes = _codes(read_image(path))
+    assert {"tables_contradict_exif", "makernote_missing"} <= codes
+    msg = next(f.message for f in run_checks(read_image(path)) if f.code == "tables_contradict_exif")
+    assert "WeChat" in msg
+
+
+def test_camera_claim_on_standard_tables(tmp_path):
+    path = tmp_path / "resaved.jpg"
+    _forged(path, 85, makernote=b"CANON\x00" * 4)
+    codes = _codes(read_image(path))
+    assert "tables_contradict_exif" in codes
+    assert "makernote_missing" not in codes
+
+
+def test_consistent_camera_is_quiet(tmp_path):
+    flat = [4] * 64  # stands in for a camera's own tables
+    path = tmp_path / "camera.jpg"
+    _forged(path, 90, makernote=b"CANON\x00" * 4, qtables=[flat, flat])
+    codes = _codes(read_image(path))
+    assert not {"tables_contradict_exif", "makernote_missing"} & codes

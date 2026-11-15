@@ -111,6 +111,59 @@ def _provenance_checks(report: ImageReport) -> list[Finding]:
     return out
 
 
+CAMERA_BRANDS = (
+    "canon", "nikon", "sony", "fujifilm", "olympus", "om digital", "panasonic",
+    "leica", "pentax", "ricoh", "hasselblad", "sigma",
+)
+
+
+def _consistency_checks(report: ImageReport) -> list[Finding]:
+    """Cross-check camera claims in EXIF against how the file was encoded."""
+    image = report.groups.get("Image", {})
+    exif = report.groups.get("Exif", {})
+    make = str(image.get("Make", "")).strip()
+    if not make:
+        return []
+    model = str(image.get("Model", "")).strip()
+    camera = f"{make} {model}".strip()
+    brand = make.lower()
+    out: list[Finding] = []
+
+    if "MakerNote" not in exif:
+        out.append(Finding(
+            "flag", "makernote_missing",
+            f"EXIF names a {camera} but has no MakerNote. Cameras and phones write "
+            "one, so the camera tags were added afterwards or software rewrote the "
+            "file and dropped it.",
+        ))
+
+    q = report.jpeg_quant
+    if q is None:
+        return out
+    known = q.known_as or ""
+    if "WeChat" in known:
+        out.append(Finding(
+            "flag", "tables_contradict_exif",
+            f"EXIF names a {camera}, but the quantization tables match WeChat "
+            "compression, which strips EXIF. The camera tags were added after the "
+            "image passed through WeChat.",
+        ))
+    elif known.startswith("Apple ImageIO") and "apple" not in brand:
+        out.append(Finding(
+            "flag", "tables_contradict_exif",
+            f"EXIF names a {camera}, but the file was written by Apple's encoder "
+            f"({known}). A {make} camera writes its own tables.",
+        ))
+    elif q.standard and (any(b in brand for b in CAMERA_BRANDS) or "apple" in brand):
+        out.append(Finding(
+            "flag", "tables_contradict_exif",
+            f"EXIF names a {camera}, but the file uses standard libjpeg tables at "
+            f"quality {q.quality}, typical of software re-saving. The camera's own "
+            "encoder uses different tables.",
+        ))
+    return out
+
+
 def run_checks(report: ImageReport) -> list[Finding]:
     if report.error:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
@@ -167,4 +220,5 @@ def run_checks(report: ImageReport) -> list[Finding]:
             "Check before sharing this file publicly.",
         ))
 
+    findings.extend(_consistency_checks(report))
     return findings
