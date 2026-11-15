@@ -65,6 +65,26 @@ def _dimension_check(report: ImageReport) -> Finding | None:
     )
 
 
+def _quant_check(report: ImageReport) -> Finding | None:
+    q = report.jpeg_quant
+    if q is None:
+        return None
+    if q.standard:
+        return Finding(
+            "info", "jpeg_tables",
+            f"Standard libjpeg quantization tables at quality {q.quality}; "
+            "typical of Pillow, GIMP and many web services and apps.",
+        )
+    if q.known_as:
+        return Finding("info", "jpeg_tables",
+                       f"Quantization tables match {q.known_as} (fingerprint {q.fingerprint}).")
+    return Finding(
+        "info", "jpeg_tables",
+        f"Custom quantization tables (fingerprint {q.fingerprint}), closest to "
+        f"libjpeg quality {q.closest_quality}; the encoder was not plain libjpeg.",
+    )
+
+
 def _provenance_checks(report: ImageReport) -> list[Finding]:
     prov = report.provenance
     out: list[Finding] = []
@@ -95,7 +115,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
 
     findings: list[Finding] = []
-    for check in (_extension_check, _dimension_check):
+    for check in (_extension_check, _dimension_check, _quant_check):
         result = check(report)
         if result:
             findings.append(result)

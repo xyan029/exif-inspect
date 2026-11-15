@@ -46,6 +46,13 @@ def _print_text(report, findings, show_all: bool) -> None:
         lat, lon = report.gps_decimal
         print(f"   GPS (decimal) : {lat}, {lon}")
 
+    q = report.jpeg_quant
+    if q is not None:
+        kind = (f"libjpeg standard, quality {q.quality}" if q.standard
+                else f"custom, closest libjpeg q{q.closest_quality} (off by {q.mean_abs_diff})")
+        extra = f", {q.subsampling}" if q.subsampling else ""
+        print(f"   jpeg tables : {kind}{extra}, fp {q.fingerprint}")
+
     prov = report.provenance
     if prov.found:
         parts = []

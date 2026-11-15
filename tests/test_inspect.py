@@ -41,7 +41,7 @@ def test_plain_image_has_no_exif(plain_jpeg):
     report = read_image(plain_jpeg)
     assert report.error is None
     assert not report.has_exif
-    assert _codes(report) == {"no_exif"}
+    assert _codes(report) == {"no_exif", "jpeg_tables"}
     assert len(report.sha256) == 64
 
 

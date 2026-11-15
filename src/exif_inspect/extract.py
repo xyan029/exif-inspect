@@ -10,6 +10,7 @@ from typing import Any
 from PIL import ExifTags, Image
 
 from .provenance import Provenance, scan
+from .quant import QuantInfo, analyze
 
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
@@ -31,6 +32,7 @@ class ImageReport:
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     gps_decimal: tuple[float, float] | None = None
     provenance: Provenance = field(default_factory=Provenance)
+    jpeg_quant: QuantInfo | None = None
     error: str | None = None
 
     @property
@@ -108,6 +110,7 @@ def read_image(path: str | Path) -> ImageReport:
                 mode=img.mode,
             )
             exif = img.getexif()
+            jpeg_quant = analyze(img)
     except Exception as exc:  # Pillow raises many different types
         return ImageReport(str(path), digest, None, None, None, error=str(exc))
 
@@ -132,6 +135,7 @@ def read_image(path: str | Path) -> ImageReport:
         }
 
     report.provenance = scan(data, report.format)
+    report.jpeg_quant = jpeg_quant
 
     # GPS tag ids: 1 LatRef, 2 Lat, 3 LonRef, 4 Lon
     if 2 in raw_gps and 4 in raw_gps:

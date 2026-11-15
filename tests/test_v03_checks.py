@@ -115,3 +115,39 @@ def test_plain_files_have_no_provenance(tmp_path):
     codes = _codes(report)
     assert not {"c2pa_manifest", "ai_generated_marker"} & codes
     assert scan(b"random bytes", None).found is False
+
+
+# --- quantization tables (v0.4.0) -----------------------------------------
+
+from exif_inspect.quant import STD_LUMA, scaled_table  # noqa: E402
+
+
+def test_libjpeg_quality_is_recovered(tmp_path):
+    for q in (30, 75, 85, 95):
+        path = tmp_path / f"q{q}.jpg"
+        Image.new("RGB", (32, 32), "white").save(path, "JPEG", quality=q)
+        info = read_image(path).jpeg_quant
+        assert info.standard and info.quality == q
+        assert info.subsampling == "4:2:0"
+
+
+def test_custom_tables_are_flagged(tmp_path):
+    flat = [3] * 64  # nothing like the standard tables
+    path = tmp_path / "custom.jpg"
+    Image.new("RGB", (32, 32), "white").save(path, "JPEG", qtables=[flat, flat])
+    report = read_image(path)
+    info = report.jpeg_quant
+    assert not info.standard and info.quality is None
+    msg = next(f.message for f in run_checks(report) if f.code == "jpeg_tables")
+    assert "Custom quantization tables" in msg and info.fingerprint in msg
+
+
+def test_png_has_no_tables(tmp_path):
+    path = tmp_path / "a.png"
+    Image.new("RGB", (8, 8)).save(path)
+    assert read_image(path).jpeg_quant is None
+
+
+def test_scaled_table_matches_libjpeg_reference():
+    assert scaled_table(STD_LUMA, 50) == STD_LUMA
+    assert scaled_table(STD_LUMA, 100) == [1] * 64
