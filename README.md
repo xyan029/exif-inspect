@@ -188,9 +188,9 @@ Every pixel of an image sensor converts light with a slightly different efficien
 2. **Fingerprint**: from N photos of one camera, `K = sum(W_i * I_i) / sum(I_i^2)`, skipping clipped pixels. Bright, flat, slightly defocused shots (sky, a white wall) give the cleanest estimate.
 3. **Match**: the residual of a questioned photo is correlated with `I * K` over all cyclic shifts, and the peak-to-correlation energy (PCE) measures how sharply it peaks at zero shift. The four rotations are tried, since phones store portrait shots turned.
 
-The analysis uses a 1024-pixel centre crop, so a fingerprint only fits photos taken at the same resolution. The tool reads PCE of 60 or more as the same camera, 20 to 60 as inconclusive, and below 20 as no evidence.
+The analysis uses a 2048-pixel centre crop (or the largest square that fits), so a fingerprint only fits photos taken at the same resolution. PCE grows with the number of pixels compared; `--crop` trades speed for strength. The tool reads PCE of 60 or more as the same camera, 20 to 60 as inconclusive, and below 20 as no evidence.
 
-**Evaluation.** On the Dresden Image Database subset distributed with [prnu-python](https://github.com/polimi-ispl/prnu-python): six cameras (two units each of the Nikon D200, D70 and D70s), fingerprints from 10 flat-field photos each, and 20 natural photos tested against all six.
+**Evaluation.** On the Dresden Image Database subset distributed with [prnu-python](https://github.com/polimi-ispl/prnu-python), with a 1024-pixel crop: six cameras (two units each of the Nikon D200, D70 and D70s), fingerprints from 10 flat-field photos each, and 20 natural photos tested against all six.
 
 | | PCE, same camera | PCE, other cameras |
 |---|---|---|
@@ -206,6 +206,15 @@ The highest score always belonged to the right camera, including against the sec
 | re-saved at JPEG quality 76 (WeChat without "Original") | 43 | 7 |
 | re-saved at quality 50 | 22 | 3 |
 | resized to 90% | 0.9 | 0 |
+
+**A phone.** An iPhone 16 Pro, main 1x camera, HEIC at the default 24 megapixels: a fingerprint from 21 shots of a plain wall, tested on five everyday 1x photos and on three control photos from a different camera.
+
+| Crop | PCE, 1x photos | PCE, control photos |
+|---|---|---|
+| 1024 | 8 to 23 | 0.7 to 3.2 |
+| 2048 | 43 to 118 (3 of 5 at or above 60) | 4.4 to 5.4 |
+
+The phone's pattern is far weaker than a DSLR's at the same crop (Nikon median 119, phone 8 to 23), and it took four times the pixels to separate the two groups clearly. This is why the default crop is 2048.
 
 Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo.
 

@@ -43,7 +43,7 @@ except ImportError:  # pragma: no cover - exercised only without PyWavelets
 SIGMA = 5.0          # assumed std of the PRNU-bearing noise, 0-255 scale
 LEVELS = 4
 WAVELET = "db4"
-CROP = 1024          # side of the centre crop analysed
+CROP = 2048          # side of the centre crop analysed (smaller images use what fits)
 PCE_THRESHOLD = 60.0
 SATURATED = 250
 
