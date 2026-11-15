@@ -29,6 +29,9 @@ For each file:
 | `jpeg_tables` | Which JPEG quantization tables the encoder used: standard libjpeg tables with the exact quality, or a custom table with its fingerprint |
 | `makernote_missing` | EXIF names a camera but carries no MakerNote, the vendor block every camera and phone writes |
 | `tables_contradict_exif` | EXIF names a camera, but the quantization tables belong to other software (WeChat, Apple ImageIO, standard libjpeg) |
+| `gps_timezone_mismatch` | The capture time zone is more than 3.5 hours from what the GPS longitude implies |
+| `gps_time_mismatch` | The GPS fix time (UTC) is more than an hour from the capture time |
+| `gps_incomplete` | An iPhone photo whose GPS block lacks the fix time and positioning error iPhones record |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals
@@ -132,6 +135,10 @@ WeChat, tested by sending the same Apple quality 90 JPEG from an iPhone to the d
 | With "Original" | Passed through unchanged (still Apple ImageIO quality 90) |
 
 Standard tables at quality 76 therefore get a WeChat hint. Any libjpeg encoder can choose the same quality, so treat it as a lead.
+
+### Limits of metadata checks
+
+The consistency checks catch careless edits: a camera added to a WeChat image, coordinates moved to another continent, a GPS block typed in by hand. A careful forger who changes only the latitude and longitude, inside the same time zone, leaves every other field consistent, and no metadata check can tell. In a red-team test a GPS edit of that kind passed all of the checks above. Settling such a case takes evidence outside the file: what the picture shows, neighbouring photos from the same device, or upload records.
 
 ## Cases behind the checks
 

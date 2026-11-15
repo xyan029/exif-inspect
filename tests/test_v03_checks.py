@@ -230,3 +230,53 @@ def test_heic_with_exif(tmp_path):
     assert report.groups["Image"]["Model"] == "iPhone 16 Pro"
     assert report.jpeg_quant is None
     assert "extension_mismatch" not in _codes(report)
+
+
+# --- GPS consistency ---------------------------------------------------------
+
+def _gps_jpeg(path, lon=(79.0, 23.0, 22.57), lon_ref="W", offset="-04:00",
+              gps_time=(23.0, 58.0, 13.45), full=True, model="iPhone 16 Pro"):
+    exif = Image.Exif()
+    exif[0x010F] = "Apple"
+    exif[0x0110] = model
+    ifd = exif.get_ifd(0x8769)
+    ifd[0x9003] = "2026:09:30 19:58:13"
+    ifd[0x9011] = offset
+    ifd[0x927C] = b"Apple iOS\x00"
+    g = {1: "N", 2: (43.0, 39.0, 26.47), 3: lon_ref, 4: lon}
+    if full:
+        g.update({7: gps_time, 29: "2026:09:30", 31: 46.4})
+    exif.get_ifd(0x8825).update(g)
+    Image.new("RGB", (32, 24), "gray").save(path, "JPEG", quality=90, exif=exif)
+
+
+def test_consistent_gps_is_quiet(tmp_path):
+    path = tmp_path / "ok.jpg"
+    _gps_jpeg(path)
+    codes = _codes(read_image(path))
+    assert not {"gps_timezone_mismatch", "gps_time_mismatch", "gps_incomplete"} & codes
+
+
+def test_gps_timezone_mismatch(tmp_path):
+    path = tmp_path / "tz.jpg"
+    _gps_jpeg(path, offset="+08:00", gps_time=(11.0, 58.0, 13.0))
+    assert "gps_timezone_mismatch" in _codes(read_image(path))
+
+
+def test_gps_time_mismatch(tmp_path):
+    path = tmp_path / "t.jpg"
+    _gps_jpeg(path, gps_time=(10.0, 0.0, 0.0))
+    assert "gps_time_mismatch" in _codes(read_image(path))
+
+
+def test_gps_incomplete_iphone(tmp_path):
+    path = tmp_path / "bare.jpg"
+    _gps_jpeg(path, full=False)
+    assert "gps_incomplete" in _codes(read_image(path))
+
+
+def test_timezone_wraps_at_date_line(tmp_path):
+    # Kiribati: longitude about -150 but clocks at UTC+14.
+    path = tmp_path / "kiribati.jpg"
+    _gps_jpeg(path, lon=(150.0, 0.0, 0.0), offset="+14:00", gps_time=(5.0, 58.0, 13.0))
+    assert "gps_timezone_mismatch" not in _codes(read_image(path))

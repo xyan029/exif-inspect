@@ -118,6 +118,70 @@ CAMERA_BRANDS = (
 )
 
 
+
+def _parse_offset(text: str) -> float | None:
+    """'-04:00' -> -4.0"""
+    try:
+        sign = -1 if text.strip().startswith("-") else 1
+        hours, minutes = text.strip().lstrip("+-").split(":")[:2]
+        return sign * (int(hours) + int(minutes) / 60)
+    except (ValueError, AttributeError):
+        return None
+
+
+def _gps_checks(report: ImageReport) -> list[Finding]:
+    """Look for GPS data that disagrees with the rest of the EXIF."""
+    if not report.gps_decimal:
+        return []
+    image = report.groups.get("Image", {})
+    exif = report.groups.get("Exif", {})
+    gps = report.groups.get("GPS", {})
+    lat, lon = report.gps_decimal
+    out: list[Finding] = []
+
+    offset = _parse_offset(str(exif.get("OffsetTimeOriginal", "")))
+    if offset is not None:
+        # Clock offset vs. the longitude's solar offset, wrapping at the date line.
+        diff = abs(offset - lon / 15) % 24
+        diff = min(diff, 24 - diff)
+        if diff > 3.5:
+            out.append(Finding(
+                "flag", "gps_timezone_mismatch",
+                f"Capture time zone is UTC{exif.get('OffsetTimeOriginal')} but the GPS "
+                f"longitude {lon} sits about {lon / 15:+.1f} h from UTC; the location "
+                "or the time zone was changed.",
+            ))
+
+        from datetime import datetime, timedelta
+        try:
+            local = datetime.strptime(str(exif["DateTimeOriginal"]), "%Y:%m:%d %H:%M:%S")
+            h, m, sec = (float(x) for x in gps["GPSTimeStamp"])
+            gps_utc = datetime.strptime(str(gps["GPSDateStamp"]), "%Y:%m:%d") + timedelta(
+                hours=h, minutes=m, seconds=sec)
+            gap = abs((local - timedelta(hours=offset) - gps_utc).total_seconds())
+            if gap > 3600:
+                out.append(Finding(
+                    "flag", "gps_time_mismatch",
+                    f"GPS fix time ({gps['GPSDateStamp']} {h:02.0f}:{m:02.0f}:{sec:04.1f} UTC) "
+                    f"is {gap / 3600:.1f} h away from the capture time; one of them was edited.",
+                ))
+        except (KeyError, TypeError, ValueError):
+            pass
+
+    make = str(image.get("Make", "")).lower()
+    model = str(image.get("Model", "")).lower()
+    if "apple" in make and "iphone" in model:
+        missing = [k for k in ("GPSTimeStamp", "GPSHPositioningError") if k not in gps]
+        if len(missing) == 2:
+            out.append(Finding(
+                "flag", "gps_incomplete",
+                "EXIF names an iPhone, but the GPS block lacks the fix time and "
+                "positioning error that iPhones record; the coordinates were likely "
+                "written by hand.",
+            ))
+    return out
+
+
 def _consistency_checks(report: ImageReport) -> list[Finding]:
     """Cross-check camera claims in EXIF against how the file was encoded."""
     image = report.groups.get("Image", {})
@@ -221,5 +285,6 @@ def run_checks(report: ImageReport) -> list[Finding]:
             "Check before sharing this file publicly.",
         ))
 
+    findings.extend(_gps_checks(report))
     findings.extend(_consistency_checks(report))
     return findings
