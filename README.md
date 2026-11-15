@@ -36,6 +36,8 @@ For each file:
 | `thumbnail_edited` | Part of the main image differs from the EXIF thumbnail |
 | `thumbnail_unrelated` | The EXIF thumbnail shows a different picture from the main image |
 | `thumbnail_rotated` | The thumbnail is turned relative to the image (pixels rotated by software) |
+| `gain_map_misfit` | The HDR gain map no longer fits the picture: the image was resized after capture and the gain map kept |
+| `gain_map_missing` | EXIF names an iPhone 12 or later but the file has no HDR gain map, which editors such as Snapseed and Meitu drop |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals
@@ -174,6 +176,24 @@ The picture saved by `exif-inspect thumbnail` shows the thumbnail (enlarged, wit
 The thresholds were set on the 55 photos with thumbnails in the public [exif-samples](https://github.com/ianare/exif-samples) collection, from about 40 cameras and phones. On the 35 of them large enough to edit, none was flagged untouched, apart from one photo in that collection that really is a crop: its thumbnail shows the car park around the car that the main image frames. Pasted clones and painted areas covering about a tenth of the frame were found in 33 of 35 photos, crops to 70% and 50% in 33 and 32. Blurring is harder: a blur fine enough to hide a face often leaves little trace at thumbnail size, and it was found in 8 of 35.
 
 A thumbnail only helps when the editor left it alone. Many apps rewrite or delete it, phones may store a larger preview elsewhere (HEIC files keep it outside EXIF), and anyone who knows about it can replace it.
+
+## HDR gain map
+
+iPhones from the iPhone 12 on, and Ultra HDR cameras such as the Pixel, save a small grayscale gain map with each photo, which HDR displays use to brighten the highlights. A JPEG keeps it as a second image listed in its MPF (APP2) segment; a HEIC keeps it as an auxiliary image. `exif-inspect` reports its size and maker and checks that it still fits the picture. Apple writes it at exactly half the image size.
+
+An editor has three choices: rewrite the gain map along with the picture, drop it, or leave the old one in place. The last would preserve whatever was removed. One iPhone 16 Pro photo of a pill bottle on a counter was edited in four apps, each removing the bottle and its shadow:
+
+| Editor | Gain map | Image size | Other traces |
+|---|---|---|---|
+| none (original) | 2142x2856, half size | 4284x5712 | |
+| Apple Photos Clean Up | rewritten, bottle gone | 4284x5712 | IPTC `compositeWithTrainedAlgorithmicMedia` |
+| Google Photos Magic Eraser | rewritten, bottle gone, **left at 2142x2856** | 3144x4192 | IPTC source type, "Edited with Google AI" |
+| Snapseed 4.2 | dropped | 4284x5712 | `Software` tag, MakerNote dropped |
+| Meitu 12.22 | dropped | 4284x5712 | `Software` tag, MakerNote dropped |
+
+None of the four left a stale gain map. Google Photos shrinks the picture and keeps a gain map sized for the original (scale 0.68), which `gain_map_misfit` catches without relying on its label. A file whose EXIF names a recent iPhone but has no gain map gets an informational `gain_map_missing`; photos taken with HDR off, or converted by other software, lack one too.
+
+The Clean Up photo from the "Finding replaced areas" case below also had its gain map rewritten in exactly the two edited areas and left untouched elsewhere. Comparing the gain map with the picture in 32-pixel blocks did not locate the edit without the original: the most anomalous blocks fell in the edited areas no more often than chance.
 
 ## Camera identification (PRNU)
 

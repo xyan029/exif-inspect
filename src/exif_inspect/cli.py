@@ -68,6 +68,12 @@ def _print_text(report, findings, show_all: bool) -> None:
             state = "matches the main image"
         print(f"   thumbnail : {w}x{h}, {state}")
 
+    g = report.gain_map
+    if g is not None:
+        sx, sy = g.scale
+        scale = f"{sx:.2f}" if abs(sx - sy) < 0.01 else f"{sx:.2f}x{sy:.2f}"
+        print(f"   gain map : {g.size[0]}x{g.size[1]} ({g.kind}, {g.container}), scale {scale}")
+
     prov = report.provenance
     if prov.found:
         parts = []

@@ -16,6 +16,7 @@ try:  # optional: lets Pillow open iPhone HEIC/HEIF photos
 except ImportError:
     HEIF_SUPPORT = False
 
+from .gainmap import GainMapInfo, from_heif, from_jpeg
 from .provenance import Provenance, scan
 from .quant import QuantInfo, analyze
 from .thumbnail import ThumbInfo
@@ -43,6 +44,7 @@ class ImageReport:
     provenance: Provenance = field(default_factory=Provenance)
     jpeg_quant: QuantInfo | None = None
     thumbnail: ThumbInfo | None = None
+    gain_map: GainMapInfo | None = None
     error: str | None = None
 
     @property
@@ -154,6 +156,13 @@ def read_image(path: str | Path) -> ImageReport:
     report.provenance = scan(data, report.format)
     report.jpeg_quant = jpeg_quant
     report.thumbnail = thumbnail
+    try:
+        if report.format in ("JPEG", "MPO"):
+            report.gain_map = from_jpeg(data, report.size)
+        elif report.format == "HEIF":
+            report.gain_map = from_heif(path)
+    except Exception:  # a damaged MPF segment should not sink the report
+        report.gain_map = None
 
     # GPS tag ids: 1 LatRef, 2 Lat, 3 LonRef, 4 Lon
     if 2 in raw_gps and 4 in raw_gps:

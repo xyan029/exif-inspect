@@ -6,6 +6,7 @@ so every finding here is a lead to follow up, never a conclusion.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -265,6 +266,36 @@ def _thumbnail_checks(report: ImageReport) -> list[Finding]:
     return out
 
 
+def _gain_map_checks(report: ImageReport) -> list[Finding]:
+    g = report.gain_map
+    if g is not None:
+        if not g.misfit:
+            return []
+        (gw, gh), (w, h) = g.size, g.main_size
+        sx, _ = g.scale
+        return [Finding(
+            "flag", "gain_map_misfit",
+            f"The HDR gain map is {gw}x{gh} but the image is {w}x{h} (scale {sx:.2f}). "
+            + ("Cameras write Apple gain maps at half the image size, so "
+               if g.kind == "Apple" else "The two no longer have the same shape, so ")
+            + "the picture was resized after capture while the gain map was kept. "
+            "Google Photos does this when it saves an edit.",
+        )]
+    model = str(report.groups.get("Image", {}).get("Model", ""))
+    make = str(report.groups.get("Image", {}).get("Make", ""))
+    m = re.search(r"iPhone (\d+)", model)
+    if (make.startswith("Apple") and m and int(m.group(1)) >= 12
+            and report.format in ("JPEG", "MPO", "HEIF")):
+        return [Finding(
+            "info", "gain_map_missing",
+            f"EXIF names an {model}, which normally saves an HDR gain map with "
+            "each photo, but this file has none. Editors such as Snapseed and Meitu "
+            "drop it when they re-save a photo; photos taken with HDR off, or "
+            "converted by other software, lack it too.",
+        )]
+    return []
+
+
 def run_checks(report: ImageReport) -> list[Finding]:
     if report.error:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
@@ -276,6 +307,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
             findings.append(result)
     findings.extend(_provenance_checks(report))
     findings.extend(_thumbnail_checks(report))
+    findings.extend(_gain_map_checks(report))
 
     if not report.has_exif:
         if report.provenance.found:
