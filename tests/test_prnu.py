@@ -85,3 +85,32 @@ def test_cli_prnu(camera, capsys):
     out = capsys.readouterr().out
     assert "fingerprint from 12 of 12 images" in out
     assert ": same camera" in out and "no evidence" in out
+
+
+def test_locate_finds_a_filled_area(camera):
+    fp, k, tmp = camera
+    rng = np.random.default_rng(9)
+    path = _shot(k, _scene(rng), rng, tmp / "loc.jpg")
+    img = Image.open(path)
+    # Replace a corner with content that never passed through the sensor,
+    # as AI object removal does.
+    patch = Image.fromarray(np.full((144, 144, 3), 150, dtype="uint8")).filter(ImageFilter.GaussianBlur(2))
+    noisy = np.asarray(patch, dtype=float) + np.random.default_rng(1).normal(0, 1.0, (144, 144, 3))
+    img.paste(Image.fromarray(np.clip(noisy, 0, 255).astype("uint8")), (220, 220))
+    img.save(tmp / "loc_edit.jpg", quality=95)
+    res = prnu.locate(fp, tmp / "loc_edit.jpg", block=64)
+    assert res.box is not None
+    x0, y0, x1, y1 = res.box
+    assert x0 < 300 < x1 and y0 < 300 < y1
+    clean = prnu.locate(fp, path, block=64)
+    assert clean.flag_map.mean() < 0.02
+
+
+def test_cli_locate(camera, capsys):
+    fp, k, tmp = camera
+    fp.save(tmp / "loc.npz")
+    rng = np.random.default_rng(10)
+    path = _shot(k, _scene(rng), rng, tmp / "cli_loc.jpg")
+    assert main(["prnu", "locate", "--block", "64", str(tmp / "loc.npz"), str(path)]) == 0
+    assert "pattern checkable" in capsys.readouterr().out
+    assert (tmp / "cli_loc_prnu.png").exists()

@@ -278,12 +278,19 @@ def prnu_main(argv: list[str]) -> int:
     b = sub.add_parser("build", help="estimate a camera fingerprint from photos it took")
     b.add_argument("-o", "--output", required=True, help="fingerprint file to write (.npz)")
     b.add_argument("--crop", type=int, default=prnu.CROP,
-                   help=f"side of the centre crop analysed, in pixels (default: {prnu.CROP})")
+                   help=f"side of the centre crop analysed, in pixels; 0 for the largest "
+                        f"centred square (default: {prnu.CROP})")
     b.add_argument("images", nargs="+",
                    help="photos from one camera; 20 or more flat, bright shots work best")
     m = sub.add_parser("match", help="test photos against a fingerprint")
     m.add_argument("fingerprint", help="fingerprint file from 'prnu build'")
     m.add_argument("images", nargs="+", help="photos to test")
+    loc = sub.add_parser("locate", help="map which parts of a photo lack the camera's pattern")
+    loc.add_argument("fingerprint", help="fingerprint file from 'prnu build'")
+    loc.add_argument("image", help="photo to examine")
+    loc.add_argument("-o", "--output", help="output PNG (default: <name>_prnu.png)")
+    loc.add_argument("--block", type=int,
+                     help="block size in pixels (default: a quarter of the fingerprint crop)")
     args = parser.parse_args(argv)
 
     if not prnu.available():
@@ -298,6 +305,30 @@ def prnu_main(argv: list[str]) -> int:
         return 0
 
     fp = prnu.Fingerprint.load(args.fingerprint)
+    if args.action == "locate":
+        from pathlib import Path
+
+        src = Path(args.image)
+        try:
+            res = prnu.locate(fp, src, block=args.block)
+        except Exception as exc:
+            print(f"== {src}\n   error  : {exc}")
+            return 1
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_prnu.png")
+        prnu.render_locate(src, res).save(out)
+        print(f"== {src}")
+        print(f"   PCE {res.pce:.1f} over the whole crop, {res.block}-pixel blocks")
+        print(f"   pattern checkable in {res.reliable_map.mean():.0%} of the crop "
+              "(dark, clipped and busy areas cannot be judged)")
+        if res.box:
+            print(f"   ! pattern missing around {res.box}: that area may have been "
+                  "replaced after capture")
+        else:
+            print("   no area found where the pattern is missing")
+        print(f"   output : {out} (red = pattern missing, dimmed = cannot judge, "
+              "white frame = area analysed)")
+        return 0
+
     exit_code = 0
     for image in args.images:
         try:

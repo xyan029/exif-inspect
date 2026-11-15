@@ -216,6 +216,26 @@ The highest score always belonged to the right camera, including against the sec
 
 The phone's pattern is far weaker than a DSLR's at the same crop (Nikon median 119, phone 8 to 23), and it took four times the pixels to separate the two groups clearly. This is why the default crop is 2048.
 
+**Finding replaced areas.**
+
+```bash
+exif-inspect prnu locate myphone.npz edited.jpg    # writes edited_prnu.png
+```
+
+An area pasted in, retouched or filled by AI object removal never passed through the sensor, so it lacks the pattern. `prnu locate` correlates the residual with `I * K` in overlapping blocks (a quarter of the crop wide by default) and compares each block with what the model `W = I*K + noise` predicts for it: `q * std(I*K) / std(W)`, where `q` is the median over all blocks. Blocks more than 3.5 spreads below their prediction are marked red. Dark, clipped and busy blocks, where even an untouched image would show little pattern, are dimmed as "cannot judge". The map covers only the analysed crop, so build the fingerprint with `--crop 0` to cover the largest centred square.
+
+A first version fitted the prediction with a flexible regression on brightness and texture. It learned the tampered blocks' own texture and excused them, finding none. The one-parameter physical model, with a median that a minority of tampered blocks cannot pull, fixed that.
+
+On the Dresden subset (1024 crop, 256-pixel blocks, fingerprints from 10 flat-field photos), a 384-pixel square was replaced where the clean photo's pattern was checkable:
+
+| Replacement | found (over 30% of it marked) |
+|---|---|
+| the same area blurred, a stand-in for an AI fill | 13 of 16 |
+| an area from another camera's photo | 2 of 16 |
+| nothing (untouched photo) | false marks above 1% of the crop in 1 of 20 |
+
+A splice of busy content from another camera is hard to tell from a busy area of this camera, because both predict little pattern. Smooth replacements, which is what object removal tends to produce, stand out.
+
 Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo.
 
 ## Copy-move detection
