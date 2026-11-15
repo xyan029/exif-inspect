@@ -126,10 +126,52 @@ def ela_main(argv: list[str]) -> int:
     return exit_code
 
 
+def copymove_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from .copymove import detect, draw
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect copymove",
+        description="Look for regions copied and pasted within the same image.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_copymove.png)")
+    parser.add_argument("--min-pairs", type=int, default=200,
+                        help="matching block pairs needed to report a clone (default: 200)")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        try:
+            result = detect(src, min_pairs=args.min_pairs)
+        except Exception as exc:
+            print(f"== {src}\n   error  : {exc}\n")
+            exit_code = 1
+            continue
+        print(f"== {src}")
+        if not result.clones:
+            print("   no copy-move regions found\n")
+            continue
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png")
+        draw(src, result).save(out)
+        for n, c in enumerate(result.clones, 1):
+            print(f"   clone {n}: shift {c.shift}, {c.pairs} matching block pairs")
+            print(f"            source {c.source_box} -> copy {c.copy_box}")
+        print(f"   output : {out} (orange = source, cyan = copy)\n")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "ela":
         return ela_main(argv[1:])
+    if argv and argv[0] == "copymove":
+        return copymove_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
