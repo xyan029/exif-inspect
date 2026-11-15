@@ -49,6 +49,12 @@ cd exif-inspect
 pip install -e .
 ```
 
+For iPhone HEIC photos, add the optional HEIC support:
+
+```bash
+pip install -e ".[heic]"
+```
+
 ## Usage
 
 ```bash

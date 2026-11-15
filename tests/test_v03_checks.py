@@ -211,3 +211,22 @@ def test_consistent_camera_is_quiet(tmp_path):
     _forged(path, 90, makernote=b"CANON\x00" * 4, qtables=[flat, flat])
     codes = _codes(read_image(path))
     assert not {"tables_contradict_exif", "makernote_missing"} & codes
+
+
+# --- HEIC ------------------------------------------------------------------
+
+def test_heic_with_exif(tmp_path):
+    import pytest
+    pytest.importorskip("pillow_heif")
+    from exif_inspect import extract
+    assert extract.HEIF_SUPPORT
+    exif = Image.Exif()
+    exif[0x010F] = "Apple"
+    exif[0x0110] = "iPhone 16 Pro"
+    path = tmp_path / "IMG_0001.HEIC"
+    Image.new("RGB", (64, 48), "teal").save(path, "HEIF", exif=exif.tobytes())
+    report = read_image(path)
+    assert report.error is None and report.format == "HEIF"
+    assert report.groups["Image"]["Model"] == "iPhone 16 Pro"
+    assert report.jpeg_quant is None
+    assert "extension_mismatch" not in _codes(report)

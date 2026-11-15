@@ -26,6 +26,7 @@ EXPECTED_FORMATS = {
     ".gif": {"GIF"},
     ".bmp": {"BMP"},
     ".tif": {"TIFF"}, ".tiff": {"TIFF"},
+    ".heic": {"HEIF"}, ".heif": {"HEIF"},
 }
 
 

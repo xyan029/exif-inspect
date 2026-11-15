@@ -9,6 +9,13 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
+try:  # optional: lets Pillow open iPhone HEIC/HEIF photos
+    from pillow_heif import register_heif_opener
+    register_heif_opener()
+    HEIF_SUPPORT = True
+except ImportError:
+    HEIF_SUPPORT = False
+
 from .provenance import Provenance, scan
 from .quant import QuantInfo, analyze
 
@@ -112,7 +119,10 @@ def read_image(path: str | Path) -> ImageReport:
             exif = img.getexif()
             jpeg_quant = analyze(img)
     except Exception as exc:  # Pillow raises many different types
-        return ImageReport(str(path), digest, None, None, None, error=str(exc))
+        msg = str(exc)
+        if not HEIF_SUPPORT and path.suffix.lower() in (".heic", ".heif"):
+            msg += " (install HEIC support: pip install 'exif-inspect[heic]')"
+        return ImageReport(str(path), digest, None, None, None, error=msg)
 
     # Top-level IFD0 tags (camera make, software, timestamps...)
     report.groups["Image"] = {
