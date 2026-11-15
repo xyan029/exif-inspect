@@ -16,6 +16,7 @@ dependencies = ["Pillow>=9.4", "numpy>=1.23"]
 dev = ["pytest"]
 heic = ["pillow-heif"]
 keypoints = ["opencv-python-headless>=4.5"]
+prnu = ["PyWavelets>=1.4"]
 
 [project.scripts]
 exif-inspect = "exif_inspect.cli:main"

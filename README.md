@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds copy-move clones, and compares the EXIF thumbnail with the main image.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -173,6 +173,41 @@ The picture saved by `exif-inspect thumbnail` shows the thumbnail (enlarged, wit
 The thresholds were set on the 55 photos with thumbnails in the public [exif-samples](https://github.com/ianare/exif-samples) collection, from about 40 cameras and phones. On the 35 of them large enough to edit, none was flagged untouched, apart from one photo in that collection that really is a crop: its thumbnail shows the car park around the car that the main image frames. Pasted clones and painted areas covering about a tenth of the frame were found in 33 of 35 photos, crops to 70% and 50% in 33 and 32. Blurring is harder: a blur fine enough to hide a face often leaves little trace at thumbnail size, and it was found in 8 of 35.
 
 A thumbnail only helps when the editor left it alone. Many apps rewrite or delete it, phones may store a larger preview elsewhere (HEIC files keep it outside EXIF), and anyone who knows about it can replace it.
+
+## Camera identification (PRNU)
+
+```bash
+pip install -e ".[prnu]"                               # adds PyWavelets
+exif-inspect prnu build -o myphone.npz flat/*.jpg      # fingerprint from 20+ photos
+exif-inspect prnu match myphone.npz questioned/*.jpg   # PCE score per photo
+```
+
+Every pixel of an image sensor converts light with a slightly different efficiency. The differences are fixed for the life of the sensor and leave the same faint multiplicative pattern, the photo-response non-uniformity (PRNU), in every picture. It works as a fingerprint of one physical camera, telling apart two units of the same model. The implementation follows Lukas, Fridrich and Goljan (2006) and Chen et al. (2008):
+
+1. **Noise residual**: the image minus a denoised copy (4-level `db4` wavelet transform, local Wiener filter on the detail bands). Row and column means are removed on each colour-filter subgrid and spectral peaks are flattened, which strips patterns that every camera of a model shares.
+2. **Fingerprint**: from N photos of one camera, `K = sum(W_i * I_i) / sum(I_i^2)`, skipping clipped pixels. Bright, flat, slightly defocused shots (sky, a white wall) give the cleanest estimate.
+3. **Match**: the residual of a questioned photo is correlated with `I * K` over all cyclic shifts, and the peak-to-correlation energy (PCE) measures how sharply it peaks at zero shift. The four rotations are tried, since phones store portrait shots turned.
+
+The analysis uses a 1024-pixel centre crop, so a fingerprint only fits photos taken at the same resolution. The tool reads PCE of 60 or more as the same camera, 20 to 60 as inconclusive, and below 20 as no evidence.
+
+**Evaluation.** On the Dresden Image Database subset distributed with [prnu-python](https://github.com/polimi-ispl/prnu-python): six cameras (two units each of the Nikon D200, D70 and D70s), fingerprints from 10 flat-field photos each, and 20 natural photos tested against all six.
+
+| | PCE, same camera | PCE, other cameras |
+|---|---|---|
+| median | 119 | 0.7 |
+| range | 11 to several hundred | up to 14.9 |
+| at or above 60 | 14 of 20 | 0 of 100 |
+
+The highest score always belonged to the right camera, including against the second unit of the same model. Photos with little light or heavy texture gave weaker scores. Processing erodes the pattern quickly:
+
+| Same 20 photos | median PCE | at or above 60 |
+|---|---|---|
+| as taken | 119 | 14 |
+| re-saved at JPEG quality 76 (WeChat without "Original") | 43 | 7 |
+| re-saved at quality 50 | 22 | 3 |
+| resized to 90% | 0.9 | 0 |
+
+Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo.
 
 ## Copy-move detection
 

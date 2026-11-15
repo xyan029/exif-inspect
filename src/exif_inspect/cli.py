@@ -267,8 +267,60 @@ def thumbnail_main(argv: list[str]) -> int:
     return exit_code
 
 
+def prnu_main(argv: list[str]) -> int:
+    from . import prnu
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect prnu",
+        description="Identify the camera that took a photo from its sensor noise (PRNU).",
+    )
+    sub = parser.add_subparsers(dest="action", required=True)
+    b = sub.add_parser("build", help="estimate a camera fingerprint from photos it took")
+    b.add_argument("-o", "--output", required=True, help="fingerprint file to write (.npz)")
+    b.add_argument("--crop", type=int, default=prnu.CROP,
+                   help=f"side of the centre crop analysed, in pixels (default: {prnu.CROP})")
+    b.add_argument("images", nargs="+",
+                   help="photos from one camera; 20 or more flat, bright shots work best")
+    m = sub.add_parser("match", help="test photos against a fingerprint")
+    m.add_argument("fingerprint", help="fingerprint file from 'prnu build'")
+    m.add_argument("images", nargs="+", help="photos to test")
+    args = parser.parse_args(argv)
+
+    if not prnu.available():
+        print('PRNU needs PyWavelets: pip install "exif-inspect[prnu]"')
+        return 2
+
+    if args.action == "build":
+        fp = prnu.build(args.images, crop=args.crop)
+        fp.save(args.output)
+        print(f"fingerprint from {fp.images} of {len(args.images)} images, "
+              f"{fp.crop}x{fp.crop} centre crop -> {args.output}")
+        return 0
+
+    fp = prnu.Fingerprint.load(args.fingerprint)
+    exit_code = 0
+    for image in args.images:
+        try:
+            result = prnu.match(fp, image)
+        except Exception as exc:
+            print(f"== {image}\n   error  : {exc}")
+            exit_code = 1
+            continue
+        if result.pce >= prnu.PCE_THRESHOLD:
+            verdict = "same camera"
+        elif result.pce >= 20:
+            verdict = "inconclusive, leaning towards the same camera"
+        else:
+            verdict = "no evidence of the same camera"
+        turn = f", image turned {result.rotation} degrees" if result.rotation else ""
+        print(f"== {image}\n   PCE {result.pce:.1f}{turn}: {verdict}")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "prnu":
+        return prnu_main(argv[1:])
     if argv and argv[0] == "thumbnail":
         return thumbnail_main(argv[1:])
     if argv and argv[0] == "ela":
