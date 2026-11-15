@@ -59,6 +59,13 @@ def fingerprint(tables: dict[int, list[int]]) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
+# Standard libjpeg qualities that specific services were observed to use.
+# A match is a hint only: any libjpeg encoder can pick the same quality.
+KNOWN_STANDARD_QUALITY: dict[int, str] = {
+    76: "WeChat images sent without 'Original' (observed Nov 2026, EXIF stripped)",
+}
+
+
 @dataclass
 class QuantInfo:
     tables: int
@@ -103,6 +110,9 @@ def analyze(img: Image.Image) -> QuantInfo | None:
 
     fp = fingerprint(tables)
     standard = best_d == 0
+    known = KNOWN_TABLES.get(fp)
+    if standard and known is None:
+        known = KNOWN_STANDARD_QUALITY.get(best_q)
     return QuantInfo(
         tables=len(tables),
         standard=standard,
@@ -111,5 +121,5 @@ def analyze(img: Image.Image) -> QuantInfo | None:
         mean_abs_diff=round(best_d, 2),
         subsampling=sampling,
         fingerprint=fp,
-        known_as=KNOWN_TABLES.get(fp),
+        known_as=known,
     )

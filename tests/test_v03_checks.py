@@ -164,3 +164,12 @@ def test_known_fingerprint_is_named(tmp_path, monkeypatch):
     assert report.jpeg_quant.known_as == "Test encoder"
     msg = next(f.message for f in run_checks(report) if f.code == "jpeg_tables")
     assert "Test encoder" in msg
+
+
+def test_wechat_quality_hint(tmp_path):
+    path = tmp_path / "wx.jpg"
+    Image.new("RGB", (16, 16)).save(path, "JPEG", quality=76)
+    report = read_image(path)
+    assert report.jpeg_quant.standard and "WeChat" in report.jpeg_quant.known_as
+    msg = next(f.message for f in run_checks(report) if f.code == "jpeg_tables")
+    assert "Consistent with WeChat" in msg

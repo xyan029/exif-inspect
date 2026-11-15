@@ -112,6 +112,15 @@ Known fingerprints so far, each measured from a sample:
 
 The Apple entries come from `sips -s format jpeg -s formatOptions N` on macOS; a screenshot cropped on an iPhone matched the quality 90 entry. At quality 100 every encoder writes all-ones tables, so those files cannot be told apart.
 
+WeChat, tested by sending the same Apple quality 90 JPEG from an iPhone to the desktop app:
+
+| Mode | Result |
+|---|---|
+| Without "Original" | Re-encoded with standard libjpeg tables at quality 76, EXIF stripped |
+| With "Original" | Passed through unchanged (still Apple ImageIO quality 90) |
+
+Standard tables at quality 76 therefore get a WeChat hint. Any libjpeg encoder can choose the same quality, so treat it as a lead.
+
 ## Cases behind the checks
 
 Each check added in v0.3.0 came from a file met in practice:

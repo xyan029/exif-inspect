@@ -70,10 +70,11 @@ def _quant_check(report: ImageReport) -> Finding | None:
     if q is None:
         return None
     if q.standard:
+        hint = (f" Consistent with {q.known_as}." if q.known_as
+                else " Typical of Pillow, GIMP and many web services and apps.")
         return Finding(
             "info", "jpeg_tables",
-            f"Standard libjpeg quantization tables at quality {q.quality}; "
-            "typical of Pillow, GIMP and many web services and apps.",
+            f"Standard libjpeg quantization tables at quality {q.quality}.{hint}",
         )
     if q.known_as:
         return Finding("info", "jpeg_tables",
