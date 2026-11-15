@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "exif-inspect"
+version = "0.1.0"
+description = "Print EXIF metadata and simple forensic hints for images."
+readme = "README.md"
+license = "MIT"
+authors = [{ name = "Xiaoyu Yan" }]
+requires-python = ">=3.9"
+dependencies = ["Pillow>=9.4"]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[project.scripts]
+exif-inspect = "exif_inspect.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
