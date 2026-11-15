@@ -38,7 +38,7 @@ Metadata is easy to edit, copy or strip, so each finding is a lead for further a
 
 ## Install
 
-Requires Python 3.9+.
+Requires Python 3.10+.
 
 ```bash
 git clone https://github.com/xyan029/exif-inspect.git
