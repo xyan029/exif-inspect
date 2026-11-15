@@ -342,7 +342,7 @@ def prnu_main(argv: list[str]) -> int:
         if result.pce >= prnu.PCE_THRESHOLD:
             verdict = "same camera"
         elif result.pce >= 20:
-            verdict = "inconclusive, leaning towards the same camera"
+            verdict = "inconclusive"
         else:
             verdict = "no evidence of the same camera"
         turn = f", image turned {result.rotation} degrees" if result.rotation else ""

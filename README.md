@@ -188,7 +188,7 @@ Every pixel of an image sensor converts light with a slightly different efficien
 2. **Fingerprint**: from N photos of one camera, `K = sum(W_i * I_i) / sum(I_i^2)`, skipping clipped pixels. Bright, flat, slightly defocused shots (sky, a white wall) give the cleanest estimate.
 3. **Match**: the residual of a questioned photo is correlated with `I * K` over all cyclic shifts, and the peak-to-correlation energy (PCE) measures how sharply it peaks at zero shift. The four rotations are tried, since phones store portrait shots turned.
 
-The analysis uses a 2048-pixel centre crop (or the largest square that fits), so a fingerprint only fits photos taken at the same resolution. PCE grows with the number of pixels compared; `--crop` trades speed for strength. The tool reads PCE of 60 or more as the same camera, 20 to 60 as inconclusive, and below 20 as no evidence.
+The analysis uses a 2048-pixel centre crop (or the largest square that fits), so a fingerprint only fits photos taken at the same resolution. PCE grows with the number of pixels compared; `--crop` trades speed for strength. The tool reads PCE of 60 or more as the same camera, 20 to 60 as inconclusive, and below 20 as no evidence. A different camera inside the same phone reached 21.5 in the test below, so an inconclusive score says nothing about which way the answer leans.
 
 **Evaluation.** On the Dresden Image Database subset distributed with [prnu-python](https://github.com/polimi-ispl/prnu-python), with a 1024-pixel crop: six cameras (two units each of the Nikon D200, D70 and D70s), fingerprints from 10 flat-field photos each, and 20 natural photos tested against all six.
 
@@ -207,14 +207,16 @@ The highest score always belonged to the right camera, including against the sec
 | re-saved at quality 50 | 22 | 3 |
 | resized to 90% | 0.9 | 0 |
 
-**A phone.** An iPhone 16 Pro, main 1x camera, HEIC at the default 24 megapixels: a fingerprint from 21 shots of a plain wall, tested on five everyday 1x photos and on three control photos from a different camera.
+**A phone.** An iPhone 16 Pro, HEIC, 21 shots of a plain wall with the main 1x camera set to 24 megapixels. In the dim room the phone saved 11 of them at 12 megapixels instead, so two fingerprints were built, each over the largest centred square (`--crop 0`):
 
-| Crop | PCE, 1x photos | PCE, control photos |
+| Fingerprint | Tested on | PCE |
 |---|---|---|
-| 1024 | 8 to 23 | 0.7 to 3.2 |
-| 2048 | 43 to 118 (3 of 5 at or above 60) | 4.4 to 5.4 |
+| main camera, 24 MP (10 shots) | five everyday 1x photos, 24 MP | 937 to 1449 |
+| main camera, 12 MP (11 shots) | three photos from the 0.5x ultrawide camera of the same phone, 12 MP | 12.8 to 21.5 |
 
-The phone's pattern is far weaker than a DSLR's at the same crop (Nikon median 119, phone 8 to 23), and it took four times the pixels to separate the two groups clearly. This is why the default crop is 2048.
+The main camera's pattern is strong once the fingerprint and the photos share one resolution, stronger than the Nikons' at their smaller crop. The ultrawide camera has its own sensor and stays far below 60. Its scores still sit a little above those between separate Nikons (up to 14.9), which fits processing shared by the lenses of one phone; with a weaker fingerprint such scores could reach the inconclusive band.
+
+An earlier attempt pooled the 24 and 12 megapixel shots into one fingerprint over a 2048-pixel crop and scored the same 1x photos at only 43 to 118. Two differences in pixel mapping blur each other, which is why `prnu build` now keeps a single resolution.
 
 **Finding replaced areas.**
 
