@@ -195,7 +195,7 @@ The analysis uses a 1024-pixel centre crop, so a fingerprint only fits photos ta
 | | PCE, same camera | PCE, other cameras |
 |---|---|---|
 | median | 119 | 0.7 |
-| range | 11 to several hundred | up to 14.9 |
+| range | 11 to 1257 | up to 14.9 |
 | at or above 60 | 14 of 20 | 0 of 100 |
 
 The highest score always belonged to the right camera, including against the second unit of the same model. Photos with little light or heavy texture gave weaker scores. Processing erodes the pattern quickly:
