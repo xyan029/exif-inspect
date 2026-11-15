@@ -83,7 +83,7 @@ def test_cli_prnu(camera, capsys):
     assert main(["prnu", "build", "--crop", str(SIZE), "-o", str(tmp / "cam.npz"), *flats]) == 0
     assert main(["prnu", "match", str(tmp / "cam.npz"), str(same), str(other)]) == 0
     out = capsys.readouterr().out
-    assert "fingerprint from 12 of 12 images" in out
+    assert "fingerprint from 12 of 12 images (384x384)" in out
     assert ": same camera" in out and "no evidence" in out
 
 
@@ -114,3 +114,16 @@ def test_cli_locate(camera, capsys):
     assert main(["prnu", "locate", "--block", "64", str(tmp / "loc.npz"), str(path)]) == 0
     assert "pattern checkable" in capsys.readouterr().out
     assert (tmp / "cli_loc_prnu.png").exists()
+
+
+def test_build_keeps_the_common_resolution(camera, tmp_path):
+    fp, k, tmp = camera
+    flats = sorted(tmp.glob("flat*.jpg"))
+    Image.open(flats[0]).resize((300, 300)).save(tmp_path / "small.jpg", quality=95)
+    built = prnu.build([tmp_path / "small.jpg", *flats], crop=SIZE)
+    assert built.images == 12 and built.source == (SIZE, SIZE)
+    assert built.skipped and "300x300" in built.skipped[0][1]
+    built.save(tmp_path / "fp.npz")
+    assert prnu.Fingerprint.load(tmp_path / "fp.npz").source == (SIZE, SIZE)
+    with pytest.raises(ValueError, match="resolutions must match"):
+        prnu.match(built, tmp_path / "small.jpg")

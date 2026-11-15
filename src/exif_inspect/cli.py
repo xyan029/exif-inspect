@@ -300,8 +300,10 @@ def prnu_main(argv: list[str]) -> int:
     if args.action == "build":
         fp = prnu.build(args.images, crop=args.crop)
         fp.save(args.output)
-        print(f"fingerprint from {fp.images} of {len(args.images)} images, "
-              f"{fp.crop}x{fp.crop} centre crop -> {args.output}")
+        print(f"fingerprint from {fp.images} of {len(args.images)} images "
+              f"({fp.source[0]}x{fp.source[1]}), {fp.crop}x{fp.crop} centre crop -> {args.output}")
+        for path, reason in fp.skipped:
+            print(f"   skipped {path}: {reason}")
         return 0
 
     fp = prnu.Fingerprint.load(args.fingerprint)

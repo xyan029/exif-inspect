@@ -236,7 +236,7 @@ On the Dresden subset (1024 crop, 256-pixel blocks, fingerprints from 10 flat-fi
 
 A splice of busy content from another camera is hard to tell from a busy area of this camera, because both predict little pattern. Smooth replacements, which is what object removal tends to produce, stand out.
 
-Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo.
+Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo. Phones also switch resolution on their own (an iPhone set to 24 megapixels falls back to 12 in dim light), so `prnu build` keeps only the most common resolution and lists the photos it skipped, and `prnu match` and `prnu locate` refuse a photo whose resolution differs from the fingerprint's.
 
 ## Copy-move detection
 

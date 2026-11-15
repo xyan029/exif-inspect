@@ -32,7 +32,7 @@ Needs PyWavelets: pip install "exif-inspect[prnu]".
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import numpy as np
@@ -139,28 +139,69 @@ class Fingerprint:
     k: np.ndarray            # luminance fingerprint, crop x crop
     images: int
     crop: int
+    source: tuple[int, int] | None = None     # (long side, short side) of the photos used
+    skipped: list = field(default_factory=list, compare=False)   # (path, reason), not saved
 
     def save(self, path: str | Path) -> None:
-        np.savez_compressed(path, k=self.k.astype(np.float32), images=self.images, crop=self.crop)
+        np.savez_compressed(path, k=self.k.astype(np.float32), images=self.images, crop=self.crop,
+                            source=np.array(self.source or (0, 0)))
 
     @classmethod
     def load(cls, path: str | Path) -> "Fingerprint":
         d = np.load(path)
-        return cls(k=d["k"].astype(np.float64), images=int(d["images"]), crop=int(d["crop"]))
+        source = tuple(int(v) for v in d["source"]) if "source" in d.files else None
+        return cls(k=d["k"].astype(np.float64), images=int(d["images"]), crop=int(d["crop"]),
+                   source=source if source and source[0] else None)
+
+
+def _size(path) -> tuple[int, int]:
+    """(long side, short side) of a stored image, read from its header."""
+    with Image.open(path) as img:
+        return max(img.size), min(img.size)
 
 
 def build(paths, crop: int = CROP) -> Fingerprint:
-    """Estimate a camera fingerprint from several images of the same camera."""
+    """Estimate a camera fingerprint from several images of the same camera.
+
+    Only photos of the most common resolution are used: a phone that switches
+    between, say, 24 and 12 megapixels maps sensor pixels to image pixels
+    differently in each mode, and mixing them blurs the fingerprint.
+    """
+    paths = list(paths)
+    sizes = {}
+    for path in paths:
+        try:
+            sizes[path] = _size(path)
+        except Exception:
+            sizes[path] = None
+    counts = {}
+    for sz in sizes.values():
+        if sz:
+            counts[sz] = counts.get(sz, 0) + 1
+    if not counts:
+        raise ValueError("no readable images")
+    source = max(counts, key=lambda sz: (counts[sz], sz[0] * sz[1]))
+    skipped = []
+    keep = []
+    for path in paths:
+        sz = sizes[path]
+        if sz is None:
+            skipped.append((str(path), "unreadable"))
+        elif sz != source:
+            skipped.append((str(path), f"{sz[0]}x{sz[1]}, the others are {source[0]}x{source[1]}"))
+        else:
+            keep.append(path)
     num = den = None
     used = 0
     shape = None
-    for path in paths:
+    for path in keep:
         rgb = load(path, crop)
         if shape is None:
             shape = rgb.shape
         if rgb.shape != shape:
             rgb = np.rot90(rgb)
             if rgb.shape != shape:
+                skipped.append((str(path), "crop does not line up"))
                 continue
         w = residual(rgb)
         lum = _gray(rgb)
@@ -173,7 +214,15 @@ def build(paths, crop: int = CROP) -> Fingerprint:
     if not used:
         raise ValueError("no usable images")
     k = num / np.maximum(den, 1.0)
-    return Fingerprint(k=_spectral_whiten(_zero_mean(k)), images=used, crop=shape[0])
+    return Fingerprint(k=_spectral_whiten(_zero_mean(k)), images=used, crop=shape[0],
+                       source=source, skipped=skipped)
+
+
+def _check_size(fp: Fingerprint, path) -> None:
+    if fp.source and _size(path) != fp.source:
+        long_side, short_side = _size(path)
+        raise ValueError(f"photo is {long_side}x{short_side}, the fingerprint was built from "
+                         f"{fp.source[0]}x{fp.source[1]} photos; resolutions must match")
 
 
 def pce(a: np.ndarray, b: np.ndarray, exclude: int = 11) -> tuple[float, tuple[int, int]]:
@@ -207,6 +256,7 @@ class Match:
 
 def match(fp: Fingerprint, path: str | Path) -> Match:
     """PCE between a fingerprint and an image, trying the four rotations."""
+    _check_size(fp, path)
     rgb = load(path, fp.crop)
     if rgb.shape[0] != fp.crop:
         raise ValueError(f"image is smaller than the {fp.crop}-pixel fingerprint crop "
@@ -262,6 +312,7 @@ def locate(fp: "Fingerprint", path: str | Path, block: int | None = None,
     are flagged; blocks whose prediction is too weak to tell (dark, clipped or
     busy areas) are marked unreliable.
     """
+    _check_size(fp, path)
     if block is None:
         block = max(128, fp.crop // 4)     # a quarter of the crop: 256 at 1024, 512 at 2048
     rgb = load(path, fp.crop)
