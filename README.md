@@ -142,11 +142,12 @@ The consistency checks catch careless edits: a camera added to a WeChat image, c
 
 ## Cases behind the checks
 
-Each check added in v0.3.0 came from a file met in practice:
+Each of these checks came from a file met in practice:
 
 - **`extension_mismatch`**: a screenshot forwarded through a messaging app arrived as a PNG named `.jpg`.
 - **`dimension_mismatch`**: a phone screenshot cropped to 796 px wide still carried EXIF saying 1206 px, the phone's full screen width.
 - **`c2pa_manifest`**: an image downloaded straight from ChatGPT had no EXIF but held C2PA credentials in a PNG `caBX` chunk. Before v0.3.0 the tool reported only "No EXIF metadata".
+- **`copymove --keypoints`**: in a red-team test, a chalkboard sign was copied, shrunk to about a third and pasted elsewhere in the same street photo. Block matching found nothing, even with `--min-pairs 50`. `ela` still showed the paste as a bright rectangle with hard edges, because the resized patch had a different compression history from its surroundings. Keypoint matching was added so the copy-move check itself covers rescaled and rotated clones.
 
 ## Copy-move detection
 
@@ -157,6 +158,24 @@ exif-inspect copymove photo.jpg     # writes photo_copymove.png when clones are 
 A copy-move forgery pastes part of an image elsewhere in the same image, for example to duplicate a person or to cover an object with nearby grass. The detector slides a 16-pixel block over a downscaled copy of the image, describes each block by a 4x4 grid of mean intensities, sorts the descriptors so similar blocks sit next to each other, and votes on the shift between matching blocks that lie far apart. A shift backed by at least 200 block pairs is reported, with the source region outlined in orange and the copy in cyan.
 
 Flat areas such as sky are skipped. Repetitive textures (railings, tiles, windows) match at many different shifts and are filtered out for that reason. Small clones, clones that were rotated or rescaled before pasting, and heavy recompression can escape detection.
+
+### Scaled and rotated clones
+
+```bash
+pip install -e ".[keypoints]"             # adds OpenCV
+exif-inspect copymove --keypoints photo.jpg
+```
+
+Block matching compares pixels at one size and one angle, so a clone shrunk or turned before pasting slips past it. `--keypoints` matches SIFT keypoints instead, whose descriptors stay the same under scaling and rotation:
+
+1. find SIFT keypoints on a grey copy of the image, resized so its longest side is 1000 pixels (`--size` changes this),
+2. match every keypoint against all the others, keeping a match only when it is clearly better than the next best (the g2NN test),
+3. fit a similarity transform (shift, scale and rotation) to groups of matches lying close together, and keep transforms backed by at least 8 matches,
+4. drop transforms that look like a repeating pattern: keypoints with many near-identical twins, keypoints shared by three or more transforms, or two regions that overlap.
+
+The report gives the scale and rotation from the larger region (A, orange) to the smaller one (B, cyan), with yellow lines joining the matched keypoints. Which region is the original cannot be told from the geometry alone.
+
+On a test set of 40 forgeries made from scikit-image sample photos (a third of each photo pasted back at 1/3, 1/2 and 1.4 times the size, turned 30 degrees, or turned 90 degrees at 0.7 times), block matching found none and keypoint matching found 31. All eight misses on the smooth retina photo and the three clones shrunk to a third in the smallest photos (451 px wide) had too few keypoints to match. Of 18 untouched sample photos, the keypoint mode flagged two: a scanned page of text, where the same letters in the same font genuinely repeat, and a grass texture in which block matching also finds a repeated area. Text, logos and printed patterns can trigger it for that reason.
 
 ## Tests
 

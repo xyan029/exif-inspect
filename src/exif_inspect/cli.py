@@ -140,9 +140,16 @@ def copymove_main(argv: list[str]) -> int:
                         help="output PNG (single image only; default: <name>_copymove.png)")
     parser.add_argument("--min-pairs", type=int, default=200,
                         help="matching block pairs needed to report a clone (default: 200)")
+    parser.add_argument("--keypoints", action="store_true",
+                        help="match SIFT keypoints instead of blocks; finds clones that were "
+                             "scaled or rotated (needs OpenCV: pip install \"exif-inspect[keypoints]\")")
+    parser.add_argument("--size", type=int, default=1000,
+                        help="with --keypoints: longest side to analyse at, in pixels (default: 1000)")
     args = parser.parse_args(argv)
     if args.output and len(args.images) > 1:
         parser.error("--output works with a single image")
+    if args.keypoints:
+        return _keypoints_main(args)
 
     exit_code = 0
     for image in args.images:
@@ -163,6 +170,37 @@ def copymove_main(argv: list[str]) -> int:
             print(f"   clone {n}: shift {c.shift}, {c.pairs} matching block pairs")
             print(f"            source {c.source_box} -> copy {c.copy_box}")
         print(f"   output : {out} (orange = source, cyan = copy)\n")
+    return exit_code
+
+
+def _keypoints_main(args) -> int:
+    from pathlib import Path
+
+    from . import keypoints
+
+    if not keypoints.available():
+        print('keypoint mode needs OpenCV: pip install "exif-inspect[keypoints]"')
+        return 2
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        try:
+            result = keypoints.detect(src, size=args.size)
+        except Exception as exc:
+            print(f"== {src}\n   error  : {exc}\n")
+            exit_code = 1
+            continue
+        print(f"== {src}")
+        if not result.clones:
+            print(f"   no copy-move regions found ({result.keypoints} keypoints checked)\n")
+            continue
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png")
+        keypoints.draw(src, result).save(out)
+        for n, c in enumerate(result.clones, 1):
+            turn = f", rotated {abs(c.rotation):.0f} degrees" if abs(c.rotation) >= 1 else ""
+            print(f"   clone {n}: scale {c.scale:.2f}{turn}, {c.matches} matching keypoints")
+            print(f"            region A {c.box_a} -> region B {c.box_b}")
+        print(f"   output : {out} (orange = A, cyan = B, the smaller copy is B)\n")
     return exit_code
 
 
