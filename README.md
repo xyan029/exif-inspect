@@ -106,11 +106,15 @@ Known fingerprints so far, each measured from a sample:
 | Fingerprint | Encoder |
 |---|---|
 | `39d931620c0c` | Apple ImageIO, quality 70 |
+| `efd739c2599e` | Apple ImageIO, quality 72 |
+| `1ac983e0179e` | Apple ImageIO, quality 75 |
+| `21e9f0213f64` | Apple ImageIO, quality 78 |
 | `c0b709b1210a` | Apple ImageIO, quality 80 |
+| `9433a0dd45b0` | Apple ImageIO, quality 85 |
 | `5719fc272f79` | Apple ImageIO, quality 90 |
 | `86df6d4b4b47` | Apple ImageIO, quality 95 |
 
-The Apple entries come from `sips -s format jpeg -s formatOptions N` on macOS; a screenshot cropped on an iPhone matched the quality 90 entry. At quality 100 every encoder writes all-ones tables, so those files cannot be told apart.
+The Apple entries come from `sips -s format jpeg -s formatOptions N` on macOS; a screenshot cropped on an iPhone matched the quality 90 entry. At quality 100 every encoder writes all-ones tables, so those files cannot be told apart. Images saved to the iPhone photo library from Xiaohongshu, Reddit and Xianyu all carried the quality 75 tables: the fingerprint identifies the encoder that wrote the file, and several apps can share it. Visible watermarks or the image content tell those apps apart.
 
 WeChat, tested by sending the same Apple quality 90 JPEG from an iPhone to the desktop app:
 

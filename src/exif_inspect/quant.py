@@ -42,7 +42,11 @@ KNOWN_TABLES: dict[str, str] = {
     # macOS `sips -s formatOptions N` (Apple ImageIO). An iPhone-cropped
     # screenshot matched the 90 entry, so iOS appears to share these tables.
     "39d931620c0c": "Apple ImageIO at quality 70",
+    "efd739c2599e": "Apple ImageIO at quality 72",
+    "1ac983e0179e": "Apple ImageIO at quality 75 (seen on images saved by iPhone apps)",
+    "21e9f0213f64": "Apple ImageIO at quality 78",
     "c0b709b1210a": "Apple ImageIO at quality 80",
+    "9433a0dd45b0": "Apple ImageIO at quality 85",
     "5719fc272f79": "Apple ImageIO at quality 90",
     "86df6d4b4b47": "Apple ImageIO at quality 95",
 }
