@@ -229,6 +229,42 @@ def _consistency_checks(report: ImageReport) -> list[Finding]:
     return out
 
 
+def _thumbnail_checks(report: ImageReport) -> list[Finding]:
+    t = report.thumbnail
+    if t is None:
+        return []
+    out = []
+    if t.unrelated:
+        out.append(Finding(
+            "flag", "thumbnail_unrelated",
+            "The EXIF thumbnail does not match the main image. The picture may "
+            "have been replaced while its original metadata was kept.",
+        ))
+        return out
+    if t.rotation:
+        out.append(Finding(
+            "info", "thumbnail_rotated",
+            f"The EXIF thumbnail is turned {t.rotation} degrees relative to the "
+            "image; software probably rotated the pixels and left the thumbnail alone.",
+        ))
+    if t.cropped:
+        out.append(Finding(
+            "flag", "thumbnail_crop",
+            f"The EXIF thumbnail shows a wider scene: the main image matches only "
+            f"{t.cover:.0%} of it. The image was cropped after the thumbnail was "
+            "made, and the thumbnail may still show what was cut away "
+            "(see 'exif-inspect thumbnail').",
+        ))
+    elif t.changed_box:
+        out.append(Finding(
+            "flag", "thumbnail_edited",
+            f"Part of the main image, around {t.changed_box}, differs from the EXIF "
+            "thumbnail. That area may have been edited after capture "
+            "(see 'exif-inspect thumbnail').",
+        ))
+    return out
+
+
 def run_checks(report: ImageReport) -> list[Finding]:
     if report.error:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
@@ -239,6 +275,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
         if result:
             findings.append(result)
     findings.extend(_provenance_checks(report))
+    findings.extend(_thumbnail_checks(report))
 
     if not report.has_exif:
         if report.provenance.found:

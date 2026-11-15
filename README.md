@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs and finds copy-move clones.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds copy-move clones, and compares the EXIF thumbnail with the main image.
 
 ## What it reports
 
@@ -32,6 +32,10 @@ For each file:
 | `gps_timezone_mismatch` | The capture time zone is more than 3.5 hours from what the GPS longitude implies |
 | `gps_time_mismatch` | The GPS fix time (UTC) is more than an hour from the capture time |
 | `gps_incomplete` | An iPhone photo whose GPS block lacks the fix time and positioning error iPhones record |
+| `thumbnail_crop` | The EXIF thumbnail shows a wider scene than the main image: the picture was cropped after capture |
+| `thumbnail_edited` | Part of the main image differs from the EXIF thumbnail |
+| `thumbnail_unrelated` | The EXIF thumbnail shows a different picture from the main image |
+| `thumbnail_rotated` | The thumbnail is turned relative to the image (pixels rotated by software) |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals
@@ -151,6 +155,25 @@ Each of these checks came from a file met in practice:
 - **`c2pa_manifest`**: an image downloaded straight from ChatGPT had no EXIF but held C2PA credentials in a PNG `caBX` chunk. Before v0.3.0 the tool reported only "No EXIF metadata".
 - **`copymove --keypoints`**: in a red-team test, a chalkboard sign was copied, shrunk to about a third and pasted elsewhere in the same street photo. Block matching found nothing, even with `--min-pairs 50`. `ela` still showed the paste as a bright rectangle with hard edges, because the resized patch had a different compression history from its surroundings. With `--keypoints` the same photo is caught: the pasted copy, about 40 by 60 pixels, is reported at scale 0.36 of the original sign with 18 matching keypoints.
 
+## EXIF thumbnail
+
+```bash
+exif-inspect thumbnail photo.jpg             # writes photo_thumbnail.png
+exif-inspect thumbnail --extract photo.jpg   # also saves the thumbnail as photo_thumb.jpg
+```
+
+Cameras and phones store a small preview, usually 160 by 120 pixels, in the second image directory of EXIF (IFD1). Editors that crop or retouch a photo do not always regenerate it, so the preview can still show what was cut away or painted over. The tool:
+
+1. reads the thumbnail JPEG from the raw EXIF block and drops the black bars some cameras add to fill a 4:3 frame,
+2. searches the thumbnail for the main image at every position, at sizes down to 45% of its width and at four rotations, using normalised cross-correlation. A close match (0.85 or better) covering less than 90% of the thumbnail is reported as a crop,
+3. when the main image fills the thumbnail, matches brightness and contrast, compares the two in 8-pixel blocks and reports blocks that differ far more than the rest.
+
+The picture saved by `exif-inspect thumbnail` shows the thumbnail (enlarged, with the crop outlined in cyan), the main image, and a difference map with changed areas outlined in orange.
+
+The thresholds were set on the 55 photos with thumbnails in the public [exif-samples](https://github.com/ianare/exif-samples) collection, from about 40 cameras and phones. On the 35 of them large enough to edit, none was flagged untouched, apart from one photo in that collection that really is a crop: its thumbnail shows the car park around the car that the main image frames. Pasted clones and painted areas covering about a tenth of the frame were found in 33 of 35 photos, crops to 70% and 50% in 33 and 32. Blurring is harder: a blur fine enough to hide a face often leaves little trace at thumbnail size, and it was found in 8 of 35.
+
+A thumbnail only helps when the editor left it alone. Many apps rewrite or delete it, phones may store a larger preview elsewhere (HEIC files keep it outside EXIF), and anyone who knows about it can replace it.
+
 ## Copy-move detection
 
 ```bash
@@ -190,7 +213,6 @@ The tests build their own sample images, so no real photos are stored in the rep
 
 ## Roadmap
 
-- JPEG quantisation table fingerprinting
 - Full XMP and IPTC metadata
 - C2PA signature validation
 

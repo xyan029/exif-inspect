@@ -53,6 +53,21 @@ def _print_text(report, findings, show_all: bool) -> None:
         extra = f", {q.subsampling}" if q.subsampling else ""
         print(f"   jpeg tables : {kind}{extra}, fp {q.fingerprint}")
 
+    t = report.thumbnail
+    if t is not None:
+        w, h = t.size
+        if t.unrelated:
+            state = "does not match the main image"
+        elif t.cropped:
+            state = f"shows a wider scene (main image covers {t.cover:.0%})"
+        elif t.changed_box:
+            state = f"differs around {t.changed_box}"
+        elif t.partial:
+            state = "shows the centre of the main image"
+        else:
+            state = "matches the main image"
+        print(f"   thumbnail : {w}x{h}, {state}")
+
     prov = report.provenance
     if prov.found:
         parts = []
@@ -205,8 +220,57 @@ def _keypoints_main(args) -> int:
     return exit_code
 
 
+def thumbnail_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from .thumbnail import render
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect thumbnail",
+        description="Compare the EXIF thumbnail with the main image and save both side by side.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_thumbnail.png)")
+    parser.add_argument("--extract", action="store_true",
+                        help="also save the thumbnail as stored, as <name>_thumb.jpg")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            rendered = render(src)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if rendered is None:
+            print("   no EXIF thumbnail\n")
+            continue
+        data, picture = rendered
+        report = read_image(src)
+        for f in run_checks(report):
+            if f.code.startswith("thumbnail"):
+                print(f"   ! {f.message}")
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_thumbnail.png")
+        picture.save(out)
+        print(f"   output : {out} (thumbnail | main image | difference)")
+        if args.extract:
+            raw = src.with_name(f"{src.stem}_thumb.jpg")
+            raw.write_bytes(data)
+            print(f"   thumb  : {raw}")
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
+    if argv and argv[0] == "thumbnail":
+        return thumbnail_main(argv[1:])
     if argv and argv[0] == "ela":
         return ela_main(argv[1:])
     if argv and argv[0] == "copymove":

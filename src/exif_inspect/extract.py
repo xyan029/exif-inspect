@@ -18,6 +18,8 @@ except ImportError:
 
 from .provenance import Provenance, scan
 from .quant import QuantInfo, analyze
+from .thumbnail import ThumbInfo
+from .thumbnail import analyze as analyze_thumbnail
 
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
@@ -40,6 +42,7 @@ class ImageReport:
     gps_decimal: tuple[float, float] | None = None
     provenance: Provenance = field(default_factory=Provenance)
     jpeg_quant: QuantInfo | None = None
+    thumbnail: ThumbInfo | None = None
     error: str | None = None
 
     @property
@@ -118,6 +121,10 @@ def read_image(path: str | Path) -> ImageReport:
             )
             exif = img.getexif()
             jpeg_quant = analyze(img)
+            try:
+                thumbnail = analyze_thumbnail(img)
+            except Exception:  # a damaged thumbnail should not sink the report
+                thumbnail = None
     except Exception as exc:  # Pillow raises many different types
         msg = str(exc)
         if not HEIF_SUPPORT and path.suffix.lower() in (".heic", ".heif"):
@@ -146,6 +153,7 @@ def read_image(path: str | Path) -> ImageReport:
 
     report.provenance = scan(data, report.format)
     report.jpeg_quant = jpeg_quant
+    report.thumbnail = thumbnail
 
     # GPS tag ids: 1 LatRef, 2 Lat, 3 LonRef, 4 Lon
     if 2 in raw_gps and 4 in raw_gps:
