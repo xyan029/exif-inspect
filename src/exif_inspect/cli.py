@@ -143,8 +143,9 @@ def copymove_main(argv: list[str]) -> int:
     parser.add_argument("--keypoints", action="store_true",
                         help="match SIFT keypoints instead of blocks; finds clones that were "
                              "scaled or rotated (needs OpenCV: pip install \"exif-inspect[keypoints]\")")
-    parser.add_argument("--size", type=int, default=1000,
-                        help="with --keypoints: longest side to analyse at, in pixels (default: 1000)")
+    parser.add_argument("--size", type=int, default=None,
+                        help="with --keypoints: longest side to analyse at, in pixels "
+                             "(default: twice the image, kept within 1000-2400)")
     args = parser.parse_args(argv)
     if args.output and len(args.images) > 1:
         parser.error("--output works with a single image")

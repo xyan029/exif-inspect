@@ -5,7 +5,8 @@ clone that was shrunk, enlarged or turned before pasting no longer matches.
 SIFT keypoints are described in a way that does not change with scale or
 rotation, so they still match. The detector:
 
-1. finds SIFT keypoints on a grey, downscaled copy of the image,
+1. finds SIFT keypoints on a grey copy of the image, resized to twice its
+   size within 1000-2400 pixels on the longest side,
 2. matches every keypoint against all the others and keeps a match only
    when it is clearly better than the next best one (the g2NN test),
 3. drops matches between points that sit close together,
@@ -64,7 +65,7 @@ def _box(pts: np.ndarray, inv: float, pad: float) -> tuple[int, int, int, int]:
 
 def detect(
     path: str | Path,
-    size: int = 1000,
+    size: int | None = None,
     ratio: float = 0.6,
     min_dist: float = 30.0,
     min_matches: int = 8,
@@ -80,8 +81,11 @@ def detect(
 
     with Image.open(path) as img:
         grey = img.convert("L")
-    # Work at a fixed size: large photos are shrunk, small ones enlarged so a
-    # shrunken clone still carries enough keypoints.
+    # By default work at twice the original size, kept between 1000 and 2400
+    # pixels on the longest side: enlarging lets a small, shrunken clone
+    # carry enough keypoints, the cap keeps large photos fast.
+    if size is None:
+        size = min(max(2 * max(grey.size), 1000), 2400)
     scale = size / max(grey.size)
     if abs(scale - 1.0) > 0.01:
         grey = grey.resize((round(grey.width * scale), round(grey.height * scale)), Image.LANCZOS)
@@ -95,7 +99,10 @@ def detect(
 
     pts = np.array([k.pt for k in kps], dtype=np.float32)
     k = min(neighbors + 1, len(kps))
-    knn = cv2.BFMatcher(cv2.NORM_L2).knnMatch(des, des, k=k)
+    # Approximate nearest neighbours (FLANN k-d trees): exact matching is
+    # quadratic and too slow for the tens of thousands of keypoints of a
+    # large photo.
+    knn = cv2.FlannBasedMatcher(dict(algorithm=1, trees=4), dict(checks=128)).knnMatch(des, des, k=k)
 
     # g2NN: walk down each point's neighbour list while each distance is
     # clearly smaller than the next one; every neighbour passed is a match.
