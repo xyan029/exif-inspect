@@ -1,6 +1,6 @@
 # exif-inspect
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs.
 
 ## What it reports
 
@@ -19,7 +19,18 @@ For each file:
 | `gps_present` | Location is embedded in the file |
 | `no_camera` | EXIF exists but records no camera make or model |
 | `no_exif` | The file carries no EXIF at all |
+| `extension_mismatch` | The file name says one format and the content is another (a PNG named `.jpg`) |
+| `dimension_mismatch` | The width and height recorded in EXIF differ from the real image size, a sign of cropping or resizing after capture |
+| `c2pa_manifest` | C2PA Content Credentials are embedded (PNG `caBX` chunk, JPEG APP11 segment or WebP `C2PA` chunk) |
+| `ai_generated_marker` | The IPTC digital source type is `trainedAlgorithmicMedia` (made by generative AI) |
+| `ai_composite_marker` | The IPTC digital source type is `compositeWithTrainedAlgorithmicMedia` (AI combined with other content) |
 | `unreadable` | The file could not be opened as an image |
+
+### Provenance signals
+
+C2PA Content Credentials are signed records that some cameras, editors and AI image generators attach to a file. `exif-inspect` reports where a manifest sits, a best-effort claim generator name and the IPTC digital source type. It does not validate the signature, so use a C2PA verifier to confirm who signed the manifest. Invisible pixel watermarks such as SynthID need the vendor's own detector.
+
+These records live in the file container and disappear on a screenshot, most messaging apps and most social platforms. A missing manifest therefore says nothing about whether an image is AI-generated.
 
 Metadata is easy to edit, copy or strip, so each finding is a lead for further analysis. A clean result says little about whether the pixels were altered; pixel-level methods such as error level analysis cover that side.
 
@@ -83,6 +94,14 @@ exif-inspect ela -q 95 --gray -o out.png photo.jpg
 
 **Reading the heatmap.** Edges and fine texture always show higher error, while smooth areas such as sky stay dark. Compare regions of similar texture and look for one that stands out from its neighbours. The signal weakens or disappears when an image has been re-saved many times, saved at very high quality, converted from PNG, screenshotted, or recompressed by a social-media platform, so ELA works as a screening aid alongside other evidence.
 
+## Cases behind the checks
+
+Each check added in v0.3.0 came from a file met in practice:
+
+- **`extension_mismatch`**: a screenshot forwarded through a messaging app arrived as a PNG named `.jpg`.
+- **`dimension_mismatch`**: a phone screenshot cropped to 796 px wide still carried EXIF saying 1206 px, the phone's full screen width.
+- **`c2pa_manifest`**: an image downloaded straight from ChatGPT had no EXIF but held C2PA credentials in a PNG `caBX` chunk. Before v0.3.0 the tool reported only "No EXIF metadata".
+
 ## Tests
 
 ```bash
@@ -95,7 +114,8 @@ The tests build their own sample images, so no real photos are stored in the rep
 ## Roadmap
 
 - JPEG quantisation table fingerprinting
-- XMP and IPTC metadata
+- Full XMP and IPTC metadata
+- C2PA signature validation
 
 ## License
 

@@ -1,0 +1,117 @@
+import io
+import struct
+import zlib
+
+from PIL import Image
+
+from exif_inspect.checks import run_checks
+from exif_inspect.extract import read_image
+from exif_inspect.provenance import scan
+
+
+def _codes(report):
+    return {f.code for f in run_checks(report)}
+
+
+def _png_with_chunk(ctype: bytes, payload: bytes) -> bytes:
+    """A small PNG with one extra chunk inserted before IEND."""
+    buf = io.BytesIO()
+    Image.new("RGB", (8, 8), "green").save(buf, "PNG")
+    data = buf.getvalue()
+    iend = data.rindex(b"IEND") - 4
+    crc = zlib.crc32(ctype + payload) & 0xFFFFFFFF
+    chunk = struct.pack(">I", len(payload)) + ctype + payload + struct.pack(">I", crc)
+    return data[:iend] + chunk + data[iend:]
+
+
+def _fake_manifest(generator="ChatGPT", source=b"trainedAlgorithmicMedia"):
+    """Bytes shaped like a JUMBF/C2PA manifest, enough for detection tests."""
+    gen = generator.encode()
+    return (
+        b"\x00\x00\x00\x40jumb\x00\x00\x00\x1ejumdc2pa\x00"
+        + b"\x6fclaim_generator" + bytes([0x60 + len(gen)]) + gen
+        + b"digitalSourceType http://cv.iptc.org/newscodes/digitalsourcetype/"
+        + source
+    )
+
+
+# --- extension_mismatch ---------------------------------------------------
+
+def test_png_named_jpg(tmp_path):
+    path = tmp_path / "chat.jpg"
+    Image.new("RGB", (20, 20), "blue").save(path, "PNG")
+    report = read_image(path)
+    assert report.format == "PNG"
+    assert "extension_mismatch" in _codes(report)
+
+
+def test_matching_extension_is_quiet(tmp_path):
+    path = tmp_path / "ok.jpeg"
+    Image.new("RGB", (20, 20), "blue").save(path, "JPEG")
+    assert "extension_mismatch" not in _codes(read_image(path))
+
+
+# --- dimension_mismatch ---------------------------------------------------
+
+def _jpeg_with_exif_size(path, actual, recorded):
+    exif = Image.Exif()
+    exif.get_ifd(0x8769).update({0xA002: recorded[0], 0xA003: recorded[1]})
+    Image.new("RGB", actual, "gray").save(path, "JPEG", exif=exif)
+
+
+def test_cropped_after_exif(tmp_path):
+    path = tmp_path / "crop.jpg"
+    _jpeg_with_exif_size(path, actual=(796, 894), recorded=(1206, 894))
+    findings = {f.code: f.message for f in run_checks(read_image(path))}
+    assert "dimension_mismatch" in findings
+    assert "1206x894" in findings["dimension_mismatch"]
+    assert "796x894" in findings["dimension_mismatch"]
+
+
+def test_dimensions_match_or_rotated(tmp_path):
+    same = tmp_path / "same.jpg"
+    _jpeg_with_exif_size(same, actual=(300, 200), recorded=(300, 200))
+    rotated = tmp_path / "rot.jpg"
+    _jpeg_with_exif_size(rotated, actual=(300, 200), recorded=(200, 300))
+    assert "dimension_mismatch" not in _codes(read_image(same))
+    assert "dimension_mismatch" not in _codes(read_image(rotated))
+
+
+# --- provenance -----------------------------------------------------------
+
+def test_png_cabx_manifest(tmp_path):
+    path = tmp_path / "gen.png"
+    path.write_bytes(_png_with_chunk(b"caBX", _fake_manifest()))
+    report = read_image(path)
+    prov = report.provenance
+    assert prov.c2pa and prov.container == "PNG caBX chunk"
+    assert prov.generator == "ChatGPT"
+    assert prov.digital_source_type == "trainedAlgorithmicMedia"
+    codes = _codes(report)
+    assert {"c2pa_manifest", "ai_generated_marker", "no_exif"} <= codes
+    no_exif = next(f for f in run_checks(report) if f.code == "no_exif")
+    assert "screenshots" not in no_exif.message  # no misleading hint
+
+
+def test_jpeg_app11_manifest(tmp_path):
+    buf = io.BytesIO()
+    Image.new("RGB", (16, 16), "red").save(buf, "JPEG")
+    data = buf.getvalue()
+    payload = b"JP" + _fake_manifest(source=b"compositeWithTrainedAlgorithmicMedia")
+    app11 = b"\xff\xeb" + struct.pack(">H", len(payload) + 2) + payload
+    path = tmp_path / "edited.jpg"
+    path.write_bytes(data[:2] + app11 + data[2:])
+    report = read_image(path)
+    assert report.provenance.container == "JPEG APP11 segment"
+    assert report.provenance.digital_source_type == "compositeWithTrainedAlgorithmicMedia"
+    assert "ai_composite_marker" in _codes(report)
+
+
+def test_plain_files_have_no_provenance(tmp_path):
+    path = tmp_path / "plain.png"
+    Image.new("RGB", (8, 8)).save(path)
+    report = read_image(path)
+    assert not report.provenance.found
+    codes = _codes(report)
+    assert not {"c2pa_manifest", "ai_generated_marker"} & codes
+    assert scan(b"random bytes", None).found is False

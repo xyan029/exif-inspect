@@ -46,6 +46,17 @@ def _print_text(report, findings, show_all: bool) -> None:
         lat, lon = report.gps_decimal
         print(f"   GPS (decimal) : {lat}, {lon}")
 
+    prov = report.provenance
+    if prov.found:
+        parts = []
+        if prov.c2pa:
+            parts.append(f"C2PA in {prov.container}")
+        if prov.generator:
+            parts.append(f"generator {prov.generator}")
+        if prov.digital_source_type:
+            parts.append(f"source type {prov.digital_source_type}")
+        print(f"   provenance : {'; '.join(parts)}")
+
     if findings:
         print("   Findings:")
         for f in findings:

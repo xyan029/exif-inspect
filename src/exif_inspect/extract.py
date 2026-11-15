@@ -9,6 +9,8 @@ from typing import Any
 
 from PIL import ExifTags, Image
 
+from .provenance import Provenance, scan
+
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
     "Exif": ExifTags.IFD.Exif,
@@ -28,6 +30,7 @@ class ImageReport:
     mode: str | None
     groups: dict[str, dict[str, Any]] = field(default_factory=dict)
     gps_decimal: tuple[float, float] | None = None
+    provenance: Provenance = field(default_factory=Provenance)
     error: str | None = None
 
     @property
@@ -90,9 +93,10 @@ def read_image(path: str | Path) -> ImageReport:
     """Extract metadata from a single image. Never raises on bad input."""
     path = Path(path)
     try:
-        digest = sha256_of(path)
+        data = path.read_bytes()
     except OSError as exc:
         return ImageReport(str(path), "", None, None, None, error=str(exc))
+    digest = hashlib.sha256(data).hexdigest()
 
     try:
         with Image.open(path) as img:
@@ -126,6 +130,8 @@ def read_image(path: str | Path) -> ImageReport:
             _tag_name(tag, gps=(group == "GPS")): _clean(val)
             for tag, val in ifd.items()
         }
+
+    report.provenance = scan(data, report.format)
 
     # GPS tag ids: 1 LatRef, 2 Lat, 3 LonRef, 4 Lon
     if 2 in raw_gps and 4 in raw_gps:
