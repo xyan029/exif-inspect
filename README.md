@@ -154,6 +154,7 @@ Each of these checks came from a file met in practice:
 - **`dimension_mismatch`**: a phone screenshot cropped to 796 px wide still carried EXIF saying 1206 px, the phone's full screen width.
 - **`c2pa_manifest`**: an image downloaded straight from ChatGPT had no EXIF but held C2PA credentials in a PNG `caBX` chunk. Before v0.3.0 the tool reported only "No EXIF metadata".
 - **`copymove --keypoints`**: in a red-team test, a chalkboard sign was copied, shrunk to about a third and pasted elsewhere in the same street photo. Block matching found nothing, even with `--min-pairs 50`. `ela` still showed the paste as a bright rectangle with hard edges, because the resized patch had a different compression history from its surroundings. With `--keypoints` the same photo is caught: the pasted copy, about 40 by 60 pixels, is reported at scale 0.36 of the original sign with 18 matching keypoints.
+- **`prnu locate`**: an iPhone photo edited with Photos' Clean Up was caught only by the IPTC AI label in its metadata. The removed areas had almost no sensor pattern even in the untouched original, so their loss was not detectable (see [Finding replaced areas](#camera-identification-prnu)).
 
 ## EXIF thumbnail
 
@@ -237,6 +238,15 @@ On the Dresden subset (1024 crop, 256-pixel blocks, fingerprints from 10 flat-fi
 | nothing (untouched photo) | false marks above 1% of the crop in 1 of 20 |
 
 A splice of busy content from another camera is hard to tell from a busy area of this camera, because both predict little pattern. Smooth replacements, which is what object removal tends to produce, stand out.
+
+**A real AI removal.** On the same iPhone, Photos' Clean Up removed two objects from a 24-megapixel photo: a crumpled white plastic bag, now filled with the wooden surface around it, and a strip along the bright edge of a book. The edited JPEG was checked against the 24 MP fingerprint, and `prnu locate` marked nothing. With the untouched HEIC as ground truth, the pattern strength in each area (correlation of `W` with `I*K` divided by its expected value, over 64-pixel tiles) was:
+
+| Area | original photo | after Clean Up | whole photo |
+|---|---|---|---|
+| plastic bag | 0.007 | 0.029 | about 0.04 |
+| book edge | 0.007 | -0.012 | |
+
+Both areas carried about a sixth of the photo's usual pattern before anything was edited, probably because the phone's multi-frame processing smeared the sensor pattern on these bright, glossy surfaces. Removing them took away little that could be missed. The filled bag area even scores higher than before, possibly because the fill borrows the noise texture of the real pixels around it. Making the prediction depend on brightness, since this phone's pattern is relatively stronger in dark areas, did not help: the untouched original then showed deficits as strong as the edited photo's. The edit was given away only by its metadata, where Photos writes the IPTC source type `compositeWithTrainedAlgorithmicMedia` (reported as `ai_composite_marker`). PRNU localisation needs the replaced area to have had a clear pattern to begin with.
 
 Phones add their own difficulties. Each lens of a multi-camera phone has its own sensor and fingerprint. Multi-frame modes (night mode, HDR merges) and digital stabilisation shift pixels between frames and blur the pattern, and binned 48-megapixel sensors output processed 12- or 24-megapixel images. Build the fingerprint from photos of the same lens, resolution and mode as the questioned photo. Phones also switch resolution on their own (an iPhone set to 24 megapixels falls back to 12 in dim light), so `prnu build` keeps only the most common resolution and lists the photos it skipped, and `prnu match` and `prnu locate` refuse a photo whose resolution differs from the fingerprint's.
 
