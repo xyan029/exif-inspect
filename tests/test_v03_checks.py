@@ -151,3 +151,16 @@ def test_png_has_no_tables(tmp_path):
 def test_scaled_table_matches_libjpeg_reference():
     assert scaled_table(STD_LUMA, 50) == STD_LUMA
     assert scaled_table(STD_LUMA, 100) == [1] * 64
+
+
+def test_known_fingerprint_is_named(tmp_path, monkeypatch):
+    from exif_inspect import quant
+    flat = [3] * 64
+    path = tmp_path / "known.jpg"
+    Image.new("RGB", (16, 16)).save(path, "JPEG", qtables=[flat, flat])
+    fp = read_image(path).jpeg_quant.fingerprint
+    monkeypatch.setitem(quant.KNOWN_TABLES, fp, "Test encoder")
+    report = read_image(path)
+    assert report.jpeg_quant.known_as == "Test encoder"
+    msg = next(f.message for f in run_checks(report) if f.code == "jpeg_tables")
+    assert "Test encoder" in msg

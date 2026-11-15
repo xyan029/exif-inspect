@@ -101,6 +101,17 @@ exif-inspect ela -q 95 --gray -o out.png photo.jpg
 
 Each JPEG stores the quantization tables its encoder used. Encoders built on libjpeg (Pillow, GIMP, many web services and apps) scale one standard pair of tables by a 1-100 quality setting, so `exif-inspect` reports the exact quality for those files. Other software ships its own tables; for these the tool prints a 12-character fingerprint and the closest libjpeg quality. A fingerprint names the program that saved the file last, so a photo re-saved by an editor or a messaging app carries that program's tables in place of the camera's.
 
+Known fingerprints so far, each measured from a sample:
+
+| Fingerprint | Encoder |
+|---|---|
+| `39d931620c0c` | Apple ImageIO, quality 70 |
+| `c0b709b1210a` | Apple ImageIO, quality 80 |
+| `5719fc272f79` | Apple ImageIO, quality 90 |
+| `86df6d4b4b47` | Apple ImageIO, quality 95 |
+
+The Apple entries come from `sips -s format jpeg -s formatOptions N` on macOS; a screenshot cropped on an iPhone matched the quality 90 entry. At quality 100 every encoder writes all-ones tables, so those files cannot be told apart.
+
 ## Cases behind the checks
 
 Each check added in v0.3.0 came from a file met in practice:

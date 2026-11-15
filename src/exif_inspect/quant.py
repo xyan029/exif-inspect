@@ -37,7 +37,15 @@ SUBSAMPLING = {0: "4:4:4", 1: "4:2:2", 2: "4:2:0"}
 
 # Fingerprints of non-standard tables, filled from samples we collect.
 # Maps fingerprint -> description of the software and setting.
-KNOWN_TABLES: dict[str, str] = {}
+# Each entry was measured from a real sample; see README for how.
+KNOWN_TABLES: dict[str, str] = {
+    # macOS `sips -s formatOptions N` (Apple ImageIO). An iPhone-cropped
+    # screenshot matched the 90 entry, so iOS appears to share these tables.
+    "39d931620c0c": "Apple ImageIO at quality 70",
+    "c0b709b1210a": "Apple ImageIO at quality 80",
+    "5719fc272f79": "Apple ImageIO at quality 90",
+    "86df6d4b4b47": "Apple ImageIO at quality 95",
+}
 
 
 def scaled_table(base: list[int], quality: int) -> list[int]:
