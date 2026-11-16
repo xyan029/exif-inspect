@@ -356,6 +356,74 @@ def prnu_main(argv: list[str]) -> int:
     return exit_code
 
 
+def ghost_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import ghost
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect ghost",
+        description="Look for JPEG ghosts: the quality an image, or a pasted part of it, "
+                    "was saved at before its last save.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_ghost.png, "
+                             "written when a ghost region is found)")
+    parser.add_argument("--grid", action="store_true",
+                        help="also try the 63 other offsets of the 8x8 JPEG grid, which "
+                             "finds pasted patches that do not sit on the grid (64x slower)")
+    parser.add_argument("--block", type=int, default=ghost.BLOCK,
+                        help=f"analysis block in pixels, a multiple of 8 (default: {ghost.BLOCK})")
+    parser.add_argument("--curve", action="store_true",
+                        help="print the re-save error at every quality")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+    if args.block < 8 or args.block % 8:
+        parser.error("--block must be a multiple of 8")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = ghost.analyze(src, block=args.block, grid=args.grid)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if res.current_quality is None:
+            print(f"   source : {res.source_format}, not a JPEG; a ghost would show an earlier "
+                  "JPEG save")
+        else:
+            print(f"   saved at quality {res.current_quality}")
+        bars, axis = ghost.sparkline(res)
+        print(f"   re-save error by quality {res.qualities[0]}-{res.qualities[-1]}:")
+        print(f"   {bars}\n   {axis}")
+        if args.curve:
+            for q, v in zip(res.qualities, res.curve):
+                print(f"     q{q:<3d} {v}")
+        for q, depth in res.global_ghosts:
+            print(f"   ! whole image carries a ghost at quality {q} (dip {depth:.0%}): "
+                  f"it was saved as a JPEG at about that quality before")
+        if res.ghost_quality is not None and res.box is not None:
+            where = ("most of the picture" if res.ghost_fraction >= 0.5
+                     else f"{res.ghost_blocks} blocks around {res.box}")
+            off = f", grid offset {res.shift}" if res.shift != (0, 0) else ""
+            print(f"   ! ghost at quality {res.ghost_quality} in {where}{off}: that area came "
+                  f"from a JPEG saved at about quality {res.ghost_quality}")
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_ghost.png")
+            ghost.render(res).save(out)
+            print(f"   output : {out} (cyan = ghost region)")
+        elif not res.global_ghosts:
+            hint = "" if res.searched_grid else "; a patch off the 8x8 grid needs --grid"
+            print(f"   no ghost found{hint}")
+        print(f"   judged : {res.judged_fraction:.0%} of the picture has enough detail "
+              "to show a ghost\n")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -366,12 +434,14 @@ def main(argv: list[str] | None = None) -> int:
         return ela_main(argv[1:])
     if argv and argv[0] == "copymove":
         return copymove_main(argv[1:])
+    if argv and argv[0] == "ghost":
+        return ghost_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
-        epilog="Subcommands: 'exif-inspect ela IMAGE' writes an error level "
-               "analysis heatmap (see 'exif-inspect ela --help').",
+        epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), copymove, "
+               "thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",

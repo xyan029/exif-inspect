@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -147,6 +147,45 @@ Standard tables at quality 76 therefore get a WeChat hint. Any libjpeg encoder c
 ### Limits of metadata checks
 
 The consistency checks catch careless edits: a camera added to a WeChat image, coordinates moved to another continent, a GPS block typed in by hand. A careful forger who changes only the latitude and longitude, inside the same time zone, leaves every other field consistent, and no metadata check can tell. In a red-team test a GPS edit of that kind passed all of the checks above. Settling such a case takes evidence outside the file: what the picture shows, neighbouring photos from the same device, or upload records.
+
+## JPEG ghosts
+
+```bash
+exif-inspect ghost photo.jpg            # earlier JPEG qualities, whole image and by region
+exif-inspect ghost --grid photo.jpg     # also try the 63 other offsets of the 8x8 grid (slow)
+exif-inspect ghost --curve photo.jpg    # print the re-save error at every quality
+```
+
+Re-saving a JPEG at the quality it was last saved at changes it very little, and the same holds for any quality it passed through earlier: the error between the picture and a re-save dips at every quality in its history. Farid ([Exposing digital forgeries from JPEG ghosts](https://farid.berkeley.edu/downloads/publications/tifs09.pdf), 2009) named such a dip a JPEG ghost. The tool re-saves the image at every quality from 50 to 100 and measures the squared difference in 16-pixel blocks, after removing the mean of every 8x8 cell (its rounding flips back and forth in smooth areas and would look like ghosts). The curves are read in two ways:
+
+- **Whole image.** A dip in the mean curve at least 4 below the current quality and at least 15% deep means the file was saved as a JPEG at about that quality before (untouched test files never produced a dip deeper than 6%). The curve runs from quality 40 so that a dip near 50 still has a shoulder on its left; the region search below uses 50 to 100. A dip at a quality whose tables divide those of a lower dip (80 echoes 60, 75 echoes 50, 87 echoes 75) is dropped as an echo.
+- **By region.** Each block's curve is scaled to 0-1 and compared with the median curve of the picture. Blocks that turn at some quality and sit 0.35 below the rest there carry a ghost the rest lacks; blocks that rise 0.35 above the rest show the rebound between an earlier quality and the current one. Six or more connected blocks of either kind are reported with their quality and a box, and the picture is written with the region tinted cyan. Blocks with too little detail to change under any re-save are left out, and the report says what share of the picture could be judged.
+
+The current quality is read from the quantization tables when they are libjpeg's, and taken from the lowest point of the curve otherwise. A PNG has no current quality, so any dip in it reports a JPEG save in its past.
+
+```
+== twice.jpg
+   saved at quality 90
+   re-save error by quality 50-100:
+   ██▇▆▆▅▄▃▃▂▂▂▂▃▃▃▃▄▄▄▅▅▅▅▅▄▄▃▃▂▂▂▂▃▃▂▁▁▂▁▁▁▁▁▁▁▁▁▁▁▁
+   50        60        70        80        90      100
+   ! whole image carries a ghost at quality 60 (dip 48%): it was saved as a JPEG at about that quality before
+```
+
+**Grid alignment.** A ghost appears only when the 8x8 grid of the re-save lines up with the grid of the earlier compression. A pasted patch lands on the grid in one case out of 64, so `--grid` repeats the search at the other 63 offsets with a coarse set of qualities, refines the best one, and reports the offset. It costs about 12 times the plain run (3 seconds against 40 for a 1000-pixel picture), and it finds less than the plain search does on the grid: the save on the host's grid blurs the earlier quantisation, so an off-grid ghost is faint and only the stronger ones stand out. Ghosts also need the earlier quality to be lower than the current one: a patch from a better JPEG leaves none, which is the case `ela` covers.
+
+**Evaluation**, on 20 scikit-image sample pictures (300 to 1000 pixels wide):
+
+| Test | Result |
+|---|---|
+| 80 untouched files (each picture saved once at 70, 80, 90 and 95) | nothing reported, apart from one real ghost (below) |
+| 28 files saved at a lower quality first (60 then 90, 72 then 85, 80 then 95, 55 then 70) | 25 report the earlier quality within 1; the 3 missed were saved at 55 then 70, where the curve flattens instead of dipping |
+| 7 files saved at 90 then 70 | nothing reported, as expected: the earlier quality was higher |
+| 120 pictures with a 128x96 patch pasted on the grid from a copy at 55 to 80, saved 10 to 35 points higher | 93 found at the right place with the quality within 3; 4 more at the right place with the quality 4 to 6 points low (patches from 60 in a picture saved at 75, where the ghost sits close to the current quality); 23 missed, 12 of them in the clock and colour wheel pictures whose centres have too little detail to judge |
+| 10 pictures with the same patch pasted 3 pixels off the grid, with `--grid` | 3 found at the right place, offset and quality; nothing found in the other 7 |
+| 5 untouched files with `--grid` | nothing reported |
+
+No test reported a region in a wrong place. The one report among the untouched files was the `coins` picture at quality 95, and its ghost is real: the PNG in the collection shows a dip at quality 85 on its own (error 0.11 against 4.1 at quality 90), so it was a JPEG saved at quality 85 before it became a PNG. Repeated saves at the same quality, saves through other encoders' tables (Apple ImageIO, WeChat), resizing and cropping all move or blur the dips, so a ghost names a quality only approximately and a missing ghost says little.
 
 ## Cases behind the checks
 
