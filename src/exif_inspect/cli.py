@@ -74,6 +74,15 @@ def _print_text(report, findings, show_all: bool) -> None:
         scale = f"{sx:.2f}" if abs(sx - sy) < 0.01 else f"{sx:.2f}x{sy:.2f}"
         print(f"   gain map : {g.size[0]}x{g.size[1]} ({g.kind}, {g.container}), scale {scale}")
 
+    x = report.xmp
+    if x.present:
+        parts = [f"{x.size} bytes in {x.container}"]
+        if x.creator_tool:
+            parts.append(f"written by {x.creator_tool}")
+        if x.history:
+            parts.append(f"{len(x.history)} history step(s)")
+        print(f"   xmp : {', '.join(parts)}")
+
     prov = report.provenance
     if prov.found:
         parts = []
@@ -607,6 +616,77 @@ def noise_main(argv: list[str]) -> int:
     return exit_code
 
 
+def xmp_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect xmp",
+        description="Show the XMP packet of each image: creator tool, dates, document IDs, "
+                    "the editing history and the Camera Raw settings.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("--raw", action="store_true", help="print the XML packet itself")
+    args = parser.parse_args(argv)
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        report = read_image(src)
+        if report.error:
+            print(f"   error  : {report.error}\n")
+            exit_code = 1
+            continue
+        x = report.xmp
+        if not x.present:
+            print("   no XMP packet\n")
+            continue
+        print(f"   packet : {x.size} bytes in {x.container}; namespaces {', '.join(x.namespaces)}")
+        for label, value in (("creator tool", x.creator_tool), ("create date", x.create_date),
+                             ("modify date", x.modify_date), ("metadata date", x.metadata_date),
+                             ("document id", x.document_id),
+                             ("original doc", x.original_document_id),
+                             ("instance id", x.instance_id), ("derived from", x.derived_from),
+                             ("credit", x.credit), ("rights", x.rights),
+                             ("source type", x.digital_source_type)):
+            if value:
+                print(f"   {label:<13}: {value}")
+        if x.history:
+            print(f"   history ({len(x.history)} steps, oldest first):")
+            for e in x.history:
+                when = (e.when or "").replace("T", " ")
+                bits = [when or "(no time)", e.action or "?"]
+                if e.agent:
+                    bits.append(e.agent)
+                if e.changed:
+                    bits.append(f"changed {e.changed}")
+                if e.parameters:
+                    bits.append(e.parameters)
+                print("     " + "  ".join(bits))
+        if x.raw_file or x.crs_settings or x.retouch_areas or x.local_adjustments or x.has_crop:
+            print("   camera raw:")
+            width = max([16] + [len(k) + 2 for k in x.crs_settings])
+            if x.raw_file:
+                print(f"     {'raw file':<{width}}{x.raw_file}")
+            for key, value in x.crs_settings.items():
+                print(f"     {key:<{width}}{value}")
+            if x.has_crop and x.crop:
+                print(f"     {'crop':<{width}}left {x.crop[0]}, top {x.crop[1]}, right {x.crop[2]}, "
+                      f"bottom {x.crop[3]}")
+            if x.retouch_areas:
+                print(f"     {'retouch':<{width}}{x.retouch_areas} healed or cloned area(s)")
+            if x.local_adjustments:
+                print(f"     {'local':<{width}}{x.local_adjustments} local adjustment(s)")
+        for f in run_checks(report):
+            if f.code.startswith("xmp_"):
+                print(f"   {'!' if f.level == 'flag' else '-'} {f.message}")
+        if args.raw:
+            print("   --- packet ---")
+            print(x.raw.strip())
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -625,12 +705,15 @@ def main(argv: list[str] | None = None) -> int:
         return cfa_main(argv[1:])
     if argv and argv[0] == "noise":
         return noise_main(argv[1:])
+    if argv and argv[0] == "xmp":
+        return xmp_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
-               "direction), cfa (demosaicing traces), noise (noise level), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
+               "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
+               "copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
@@ -649,8 +732,9 @@ def main(argv: list[str] | None = None) -> int:
         if report.error:
             exit_code = 1
         if args.json:
-            results.append({**asdict(report),
-                            "findings": [asdict(f) for f in findings]})
+            entry = {**asdict(report), "findings": [asdict(f) for f in findings]}
+            entry["xmp"].pop("raw", None)
+            results.append(entry)
         else:
             _print_text(report, findings, args.all)
 

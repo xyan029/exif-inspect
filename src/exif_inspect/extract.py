@@ -21,6 +21,8 @@ from .provenance import Provenance, scan
 from .quant import QuantInfo, analyze
 from .thumbnail import ThumbInfo
 from .thumbnail import analyze as analyze_thumbnail
+from .xmp import XmpInfo
+from .xmp import read as read_xmp
 
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
@@ -45,6 +47,7 @@ class ImageReport:
     jpeg_quant: QuantInfo | None = None
     thumbnail: ThumbInfo | None = None
     gain_map: GainMapInfo | None = None
+    xmp: XmpInfo = field(default_factory=XmpInfo)
     error: str | None = None
 
     @property
@@ -123,6 +126,7 @@ def read_image(path: str | Path) -> ImageReport:
             )
             exif = img.getexif()
             jpeg_quant = analyze(img)
+            img_info = dict(img.info)
             try:
                 thumbnail = analyze_thumbnail(img)
             except Exception:  # a damaged thumbnail should not sink the report
@@ -154,6 +158,10 @@ def read_image(path: str | Path) -> ImageReport:
         }
 
     report.provenance = scan(data, report.format)
+    try:
+        report.xmp = read_xmp(data, report.format, img_info)
+    except Exception:  # a damaged packet should not sink the report
+        report.xmp = XmpInfo()
     report.jpeg_quant = jpeg_quant
     report.thumbnail = thumbnail
     try:
