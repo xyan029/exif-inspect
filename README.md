@@ -80,6 +80,7 @@ exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
+exif-inspect report photo.jpg          # everything above in one HTML page
 ```
 
 Example output:
@@ -307,6 +308,16 @@ The packet is read from JPEG APP1 segments, including Adobe's extended-XMP conti
 ```
 
 XMP is plain text that anyone can edit, and most messaging apps and social platforms strip it, so what it says is a lead and what it does not say means nothing. A retouch entry is as close as metadata gets to naming the spot that was changed: Lightroom records the position and size of every healed area, so the packet printed with `--raw` shows where to look with `ela`, `noise` and `copymove`.
+
+## HTML report
+
+```bash
+exif-inspect report photo.jpg                       # writes photo_report.html
+exif-inspect report --skip light,copymove photo.jpg # leave tools out
+exif-inspect report --grid -o out.html photo.jpg    # slower ghost search, chosen output path
+```
+
+One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `cfa`, `noise`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
 
 ## Cases behind the checks
 

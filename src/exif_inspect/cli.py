@@ -687,6 +687,51 @@ def xmp_main(argv: list[str]) -> int:
     return exit_code
 
 
+def report_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import report as report_mod
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect report",
+        description="Run every check on an image and write one self-contained HTML page "
+                    "with the findings, the maps and each tool's output.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output HTML path (single image only; default: <name>_report.html)")
+    parser.add_argument("--skip", default="",
+                        help="comma-separated tools to leave out, from: " + ", ".join(report_mod.TOOLS))
+    parser.add_argument("--grid", action="store_true",
+                        help="pass --grid to the ghost search (64 times slower)")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+    skip = {t.strip() for t in args.skip.split(",") if t.strip()}
+    unknown = skip - set(report_mod.TOOLS)
+    if unknown:
+        parser.error(f"unknown tool(s) in --skip: {', '.join(sorted(unknown))}")
+    tools = tuple(t for t in report_mod.TOOLS if t not in skip)
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        built = report_mod.build(src, tools, grid=args.grid)
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_report.html")
+        out.write_text(built.html, encoding="utf-8")
+        failed = [s.title for s in built.sections if s.failed]
+        print(f"== {src}")
+        print(f"   report : {out} ({out.stat().st_size // 1024} KB, {built.flags} flagged finding(s), "
+              f"{len(built.sections)} tool section(s))")
+        if failed:
+            print(f"   failed : {', '.join(failed)}")
+            exit_code = 1
+        if not built.sections:
+            exit_code = 1
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -707,13 +752,15 @@ def main(argv: list[str] | None = None) -> int:
         return noise_main(argv[1:])
     if argv and argv[0] == "xmp":
         return xmp_main(argv[1:])
+    if argv and argv[0] == "report":
+        return report_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
                "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
-               "copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
+               "copymove, thumbnail, prnu, report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
