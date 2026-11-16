@@ -554,6 +554,59 @@ def cfa_main(argv: list[str]) -> int:
     return exit_code
 
 
+def noise_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import noise
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect noise",
+        description="Map the sensor noise level and report regions whose noise does not "
+                    "match the rest of the picture.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_noise.png, "
+                             "written when a region is found)")
+    parser.add_argument("--block", type=int, default=noise.BLOCK,
+                        help=f"analysis block in pixels, a multiple of 8 (default: {noise.BLOCK})")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+    if args.block < 16 or args.block % 8:
+        parser.error("--block must be a multiple of 8, at least 16")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = noise.analyze(src, block=args.block)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if res.judged_fraction == 0:
+            print("   no block is quiet enough to measure the noise\n")
+            continue
+        trend = "rising with brightness" if res.rising else "about the same at every brightness"
+        print(f"   noise : about {res.level:.1f} grey levels in quiet areas, {trend}")
+        print(f"   checkable : {res.judged_fraction:.0%} of the picture has flat patches to "
+              "measure on")
+        if res.box:
+            what = ("has more noise than areas like it" if res.kind == "noisier"
+                    else "has less noise than areas like it")
+            print(f"   ! region around {res.box} {what} ({res.ratio:.2f} times the expected "
+                  f"level): it may have been pasted in, smoothed, painted or filled")
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_noise.png")
+            noise.render(res).save(out)
+            print(f"   output : {out} (red = noisier, blue = smoother, dimmed = cannot judge)")
+        else:
+            print("   no region differs from areas of similar texture and brightness")
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -570,12 +623,14 @@ def main(argv: list[str] | None = None) -> int:
         return light_main(argv[1:])
     if argv and argv[0] == "cfa":
         return cfa_main(argv[1:])
+    if argv and argv[0] == "noise":
+        return noise_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
-               "direction), cfa (demosaicing traces), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
+               "direction), cfa (demosaicing traces), noise (noise level), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
