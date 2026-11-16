@@ -14,7 +14,7 @@ from .extract import ImageReport
 
 # Lower-case substrings of Software values written by common editors.
 EDITORS = (
-    "photoshop", "lightroom", "gimp", "affinity", "pixelmator", "snapseed",
+    "photoshop", "lightroom", "fireworks", "gimp", "affinity", "pixelmator", "snapseed",
     "picsart", "canva", "facetune", "meitu", "photoscape", "paint.net",
     "darktable", "rawtherapee", "capture one",
 )
@@ -296,6 +296,77 @@ def _gain_map_checks(report: ImageReport) -> list[Finding]:
     return []
 
 
+def _xmp_date(value: str | None) -> str | None:
+    """'2024-05-04T10:22:31+02:00' -> '2024-05-04 10:22:31' (local clock, zone dropped)."""
+    if not value:
+        return None
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})[T ](\d{2}):(\d{2})(?::(\d{2}))?", value)
+    if not m:
+        return None
+    y, mo, d, h, mi, s = m.groups()
+    return f"{y}-{mo}-{d} {h}:{mi}:{s or '00'}"
+
+
+def _exif_date(value) -> str | None:
+    """'2024:05:04 10:22:31' -> '2024-05-04 10:22:31'."""
+    if not value:
+        return None
+    m = re.match(r"(\d{4}):(\d{2}):(\d{2}) (\d{2}):(\d{2}):(\d{2})", str(value))
+    return f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}:{m.group(6)}" if m else None
+
+
+def _xmp_checks(report: ImageReport) -> list[Finding]:
+    x = report.xmp
+    if not x.present:
+        return []
+    out: list[Finding] = []
+    editors = [a for a in x.agents if any(name in a.lower() for name in EDITORS)]
+    if editors:
+        out.append(Finding("flag", "xmp_editor",
+                           f"XMP names an image editor: {editors[0]!r}."))
+    if x.history:
+        steps = []
+        for e in x.history[:6]:
+            when = (e.when or "")[:19].replace("T", " ")
+            steps.append(" ".join(filter(None, [e.action, "by " + e.agent if e.agent else None,
+                                                "on " + when if when else None])))
+        more = f", and {len(x.history) - 6} more" if len(x.history) > 6 else ""
+        out.append(Finding("info", "xmp_history",
+                           f"XMP history records {len(x.history)} step(s): {'; '.join(steps)}{more}."))
+    if x.derived_from or (x.document_id and x.original_document_id
+                          and x.document_id != x.original_document_id):
+        source = x.derived_from or x.original_document_id
+        out.append(Finding("info", "xmp_derived",
+                           f"XMP says this file was derived from another document ({source})."))
+    if x.raw_file:
+        out.append(Finding("info", "xmp_raw",
+                           f"Developed from the raw file {x.raw_file!r} with Camera Raw settings "
+                           f"{', '.join(f'{k} {v}' for k, v in list(x.crs_settings.items())[:5])}."))
+    if x.retouch_areas:
+        out.append(Finding("flag", "xmp_retouch",
+                           f"Camera Raw healing or clone brush applied in {x.retouch_areas} "
+                           "place(s): parts of the picture were painted over."))
+    if x.local_adjustments:
+        out.append(Finding("info", "xmp_local_adjust",
+                           f"{x.local_adjustments} local adjustment(s) (masks, gradients or brush) "
+                           "recorded in Camera Raw settings."))
+    if x.has_crop and x.crop:
+        left, top, right, bottom = x.crop
+        out.append(Finding("flag", "xmp_crop",
+                           f"Cropped in Camera Raw to {right - left:.0%} x {bottom - top:.0%} of "
+                           f"the original frame (left {left:.2f}, top {top:.2f})."))
+    if x.ai_marker:
+        out.append(Finding("flag", "xmp_ai",
+                           f"XMP mentions generative AI ({x.ai_marker!r}) in its software or credit."))
+    original = _exif_date(report.groups.get("Exif", {}).get("DateTimeOriginal"))
+    created = _xmp_date(x.create_date)
+    if original and created and original != created:
+        out.append(Finding("flag", "xmp_date_mismatch",
+                           f"XMP CreateDate ({created}) differs from EXIF DateTimeOriginal "
+                           f"({original}); one of them was rewritten."))
+    return out
+
+
 def run_checks(report: ImageReport) -> list[Finding]:
     if report.error:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
@@ -308,6 +379,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
     findings.extend(_provenance_checks(report))
     findings.extend(_thumbnail_checks(report))
     findings.extend(_gain_map_checks(report))
+    findings.extend(_xmp_checks(report))
 
     if not report.has_exif:
         if report.provenance.found:

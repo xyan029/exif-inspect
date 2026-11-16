@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -38,6 +38,15 @@ For each file:
 | `thumbnail_rotated` | The thumbnail is turned relative to the image (pixels rotated by software) |
 | `gain_map_misfit` | The HDR gain map no longer fits the picture: the image was resized after capture and the gain map kept |
 | `gain_map_missing` | EXIF names an iPhone 12 or later but the file has no HDR gain map, which editors such as Snapseed and Meitu drop |
+| `xmp_editor` | The XMP packet names an image editor as creator tool or in its history |
+| `xmp_history` | `xmpMM:History` lists the saves and conversions the file went through, with software and time |
+| `xmp_derived` | The file was derived from another document (`xmpMM:DerivedFrom`, or the document ID differs from the original one) |
+| `xmp_raw` | Developed from a raw file by Camera Raw or Lightroom, with the main development settings |
+| `xmp_retouch` | Camera Raw's healing or clone brush was used: the number of areas painted over |
+| `xmp_local_adjust` | Local adjustments (masks, gradients, brush) recorded in the Camera Raw settings |
+| `xmp_crop` | Cropped in Camera Raw, with the share of the frame that was kept |
+| `xmp_ai` | The software, credit or source type in XMP names a generative AI tool |
+| `xmp_date_mismatch` | `xmp:CreateDate` differs from EXIF `DateTimeOriginal`: one of them was rewritten |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals
@@ -70,6 +79,7 @@ pip install -e ".[heic]"
 exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
+exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 ```
 
 Example output:
@@ -265,6 +275,39 @@ A noisier patch is found in most pictures and survives compression, because the 
 
 On 63 untouched camera JPEGs from the exif-samples collection (300 pixels or more on each side), 7 had a region flagged: grainy pictures from an old Nikon compact where leaves and sky came out smoother than their peers, and a dark corner of foliage in a phone HDR picture that came out noisier. In-camera noise reduction works hardest on smooth areas and leaves dark busy ones alone, so a real photograph is not perfectly even either, and a flagged region is a lead to check with the other tools rather than a verdict. The noise of a region that was blurred, cloned over or filled by AI is often the only pixel-level trace left, which is what the tool is for.
 
+## XMP editing history
+
+```bash
+exif-inspect xmp photo.jpg            # creator tool, dates, document IDs, history, Camera Raw settings
+exif-inspect xmp --raw photo.jpg      # the XML packet itself
+```
+
+Adobe's tools, and many others, keep an XML packet (XMP) in the file next to EXIF, and it says far more about editing than EXIF does. `xmp:CreatorTool` names the last program that wrote it. `xmpMM:History` gets an event on every save in Photoshop and Lightroom, with the software, the time and what changed, and `xmpMM:DerivedFrom` points at the document the file was made from. Lightroom and Camera Raw store every development setting: the raw file name, the sliders, the crop rectangle, each local adjustment, and each place where the healing or clone brush was used (`crs:RetouchAreas`). Generators and AI editors leave their name there too (Adobe Firefly in the history, the IPTC digital source type, "Made with Google AI" as credit).
+
+The packet is read from JPEG APP1 segments, including Adobe's extended-XMP continuation for packets over 64 KB, from PNG `iTXt` chunks and WebP `XMP` chunks, and from Pillow's metadata for other formats. It is parsed with the standard library, capped at 8 MB, into properties keyed by the usual prefixes (`xmp`, `xmpMM`, `crs`, `photoshop`, `dc`, `Iptc4xmpExt`, ...). The main report shows one summary line and the `xmp_*` findings listed above; the subcommand prints the whole history and the Camera Raw settings that differ from their defaults.
+
+```
+== edited.jpg
+   packet : 2561 bytes in JPEG APP1 segment; namespaces crs, dc, photoshop, xmp, xmpMM
+   creator tool : Adobe Photoshop Lightroom Classic 13.0 (Macintosh)
+   create date  : 2024-05-04T10:22:31
+   modify date  : 2024-05-06T18:40:12+02:00
+   derived from : xmp.did:0000
+   history (2 steps, oldest first):
+     (no time)  derived  converted from image/x-nikon-nef to image/jpeg, saved to new location
+     2024-05-06 18:40:12+02:00  saved  Adobe Photoshop Lightroom Classic 13.0 (Macintosh)  changed /
+   camera raw:
+     raw file        DSC_0421.NEF
+     Exposure2012    +0.65
+     Highlights2012  -40
+     crop            left 0.1, top 0.05, right 0.9, bottom 0.95
+     retouch         3 healed or cloned area(s)
+   ! Camera Raw healing or clone brush applied in 3 place(s): parts of the picture were painted over.
+   ! Cropped in Camera Raw to 80% x 90% of the original frame (left 0.10, top 0.05).
+```
+
+XMP is plain text that anyone can edit, and most messaging apps and social platforms strip it, so what it says is a lead and what it does not say means nothing. A retouch entry is as close as metadata gets to naming the spot that was changed: Lightroom records the position and size of every healed area, so the packet printed with `--raw` shows where to look with `ela`, `noise` and `copymove`.
+
 ## Cases behind the checks
 
 Each of these checks came from a file met in practice:
@@ -426,7 +469,7 @@ The tests build their own sample images, so no real photos are stored in the rep
 
 ## Roadmap
 
-- Full XMP and IPTC metadata
+- Full IPTC metadata
 - C2PA signature validation
 
 ## License
