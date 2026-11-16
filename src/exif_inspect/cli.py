@@ -424,6 +424,80 @@ def ghost_main(argv: list[str]) -> int:
     return exit_code
 
 
+def light_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import lighting
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect light",
+        description="Estimate the light direction from object outlines and report "
+                    "objects lit from somewhere else.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_light.png)")
+    parser.add_argument("--box", action="append", metavar="X0,Y0,X1,Y1",
+                        help="pixel box around one object; repeat for each object to compare "
+                             "(single image only). Without boxes every usable outline counts.")
+    args = parser.parse_args(argv)
+    if (args.output or args.box) and len(args.images) > 1:
+        parser.error("--output and --box work with a single image")
+    boxes = []
+    for text in args.box or []:
+        try:
+            x0, y0, x1, y1 = (int(v) for v in text.split(","))
+        except ValueError:
+            parser.error(f"--box needs four integers: {text!r}")
+        boxes.append((min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1)))
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = lighting.analyze(src, boxes or None)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if boxes:
+            found = {c.region for c in res.contours}
+            for i, box in enumerate(boxes):
+                c = next((c for c in res.contours if c.region == i), None)
+                if c is None:
+                    print(f"   box {i + 1} {box}: no usable outline")
+                else:
+                    mark = "!" if c.outlier else "-"
+                    print(f"   {mark} box {i + 1} {box}: lit from {c.angle:.0f} degrees "
+                          f"({lighting.compass(c.angle)}), +-{c.sigma:.0f}, fit {c.fit:.2f}")
+            if len(found) < 2:
+                print("   fewer than two boxes gave an outline, so nothing to compare")
+        else:
+            print(f"   outlines : {len(res.contours)} usable of {res.chains} edge chains")
+            for c in res.contours:
+                mark = "!" if c.outlier else "-"
+                print(f"   {mark} {c.box}: lit from {c.angle:.0f} degrees "
+                      f"({lighting.compass(c.angle)}), +-{c.sigma:.0f}, fit {c.fit:.2f}")
+        if not res.contours:
+            print("   no outline curves enough, with a clear shading, to fix a direction\n")
+            continue
+        if res.consensus:
+            print(f"   light from {res.direction:.0f} degrees ({lighting.compass(res.direction)}), "
+                  f"outlines agree within +-{res.spread:.0f}")
+            for c in res.outliers:
+                print(f"   ! outline at {c.box} is lit from {c.angle:.0f} degrees, "
+                      f"{c.deviation:.0f} off the rest: check whether it belongs to this scene")
+        elif len(res.contours) > 1:
+            print("   outlines disagree with each other; no common direction. Pick the objects "
+                  "to compare with --box")
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_light.png")
+        lighting.render(res).save(out)
+        print(f"   output : {out} (arrows point toward the light; red = disagrees, "
+              "yellow = common direction)\n")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -436,12 +510,14 @@ def main(argv: list[str] | None = None) -> int:
         return copymove_main(argv[1:])
     if argv and argv[0] == "ghost":
         return ghost_main(argv[1:])
+    if argv and argv[0] == "light":
+        return light_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
-        epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), copymove, "
-               "thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
+        epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
+               "direction), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
