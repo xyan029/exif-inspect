@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -186,6 +186,37 @@ The current quality is read from the quantization tables when they are libjpeg's
 | 5 untouched files with `--grid` | nothing reported |
 
 No test reported a region in a wrong place. The one report among the untouched files was the `coins` picture at quality 95, and its ghost is real: the PNG in the collection shows a dip at quality 85 on its own (error 0.11 against 4.1 at quality 90), so it was a JPEG saved at quality 85 before it became a PNG. Repeated saves at the same quality, saves through other encoders' tables (Apple ImageIO, WeChat), resizing and cropping all move or blur the dips, so a ghost names a quality only approximately and a missing ghost says little.
+
+## Lighting direction
+
+```bash
+exif-inspect light photo.jpg                                   # every usable outline
+exif-inspect light --box 120,80,260,300 --box 400,90,520,310 photo.jpg   # one object per box
+```
+
+Along the outline where an object hides what is behind it, the surface turns away from the camera, so its normal lies in the image plane and points straight out of the outline. Under one distant light and a matte surface the brightness just inside the outline is a linear function of that normal, `I = R (N . L) + A`, with `L` the light direction projected onto the picture, `R` the reflectance and `A` the ambient light (Johnson and Farid, [Exposing digital forgeries by detecting inconsistencies in lighting](https://farid.berkeley.edu/downloads/publications/acm05.pdf), 2005). A least-squares fit along one outline gives `L` for that object. Everything in a real photograph shares one light, so an object whose outline says otherwise was lit somewhere else.
+
+The tool finds outlines on its own. Edge pixels (Sobel gradient, thinned, hysteresis thresholds) are grouped into 8-connected chains; each chain's normals are turned to point away from its centre, the brightness 2.5 to 4.5 pixels inside is sampled, and the fit is kept when the chain covers at least 100 degrees of normal directions, the model explains at least 70% of the brightness variation, the shading swings by at least 10 grey levels and the direction is determined within 20 degrees. Directions are given in degrees, 0 for light from the right, 90 from above, 180 from the left, 270 from below.
+
+- **Without boxes**, every usable outline counts. When outlines carrying at least 60% of the evidence agree within 35 degrees, that is the scene's light, and a well-determined outline (fit 0.8 or better, within 8 degrees) more than 35 degrees off it is flagged. When they do not agree, the tool says so and flags nothing.
+- **With `--box`**, each box stands for one object and the best outline inside it (most pixels, weighted by fit) gives that object's direction. This is the mode for a real question such as whether two people in one picture were lit alike: pick the boxes around them.
+
+The picture written next to the input draws each used outline with an arrow toward its light, green when it agrees, red when it does not, and a yellow arrow in the corner for the common direction.
+
+```
+== spliced.jpg
+   outlines : 4 usable of 8 edge chains
+   - (227, 40, 291, 111): lit from 40 degrees (the upper right), +-1, fit 0.95
+   - (105, 110, 191, 209): lit from 40 degrees (the upper right), +-1, fit 0.95
+   ! (300, 155, 375, 241): lit from 220 degrees (the lower left), +-1, fit 0.95
+   - (228, 225, 286, 290): lit from 40 degrees (the upper right), +-1, fit 0.95
+   light from 40 degrees (the upper right), outlines agree within +-0
+   ! outline at (300, 155, 375, 241) is lit from 220 degrees, 180 off the rest: check whether it belongs to this scene
+```
+
+**Evaluation.** On rendered matte spheres (light 30 degrees above the image plane, sensor noise, JPEG quality 90), the estimate is close to exact: over 12 directions and three backgrounds the median error was 0.4 degrees and the largest 1.7. In a scene of four spheres, one lit from 220 degrees among three lit from 40, the odd sphere is flagged with the others agreeing within a degree, and a sphere only 60 degrees off is flagged as well. Four spheres each lit from a different side give no consensus and no flag.
+
+Real photographs are harder, and the limit is choosing outlines, not the fit. In the scikit-image sample photos the automatic pass kept 6 to 9 outlines per picture, but most belonged to helmet rims, folds, lips and edges between two materials rather than to the silhouette of a convex object, and their directions scattered: the astronaut, the cat and the motorcycle gave no consensus, which is the right answer for that evidence. The method's authors chose outlines by hand, and `--box` is the equivalent here. Several lights, a nearby light, shiny surfaces, cast shadows and a change of material along the outline all break the model, so a flagged object is a lead to examine with the other tools, not a verdict.
 
 ## Cases behind the checks
 
