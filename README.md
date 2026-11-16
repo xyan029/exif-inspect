@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -217,6 +217,27 @@ The picture written next to the input draws each used outline with an arrow towa
 **Evaluation.** On rendered matte spheres (light 30 degrees above the image plane, sensor noise, JPEG quality 90), the estimate is close to exact: over 12 directions and three backgrounds the median error was 0.4 degrees and the largest 1.7. In a scene of four spheres, one lit from 220 degrees among three lit from 40, the odd sphere is flagged with the others agreeing within a degree, and a sphere only 60 degrees off is flagged as well. Four spheres each lit from a different side give no consensus and no flag.
 
 Real photographs are harder, and the limit is choosing outlines, not the fit. In the scikit-image sample photos the automatic pass kept 6 to 9 outlines per picture, but most belonged to helmet rims, folds, lips and edges between two materials rather than to the silhouette of a convex object, and their directions scattered: the astronaut, the cat and the motorcycle gave no consensus, which is the right answer for that evidence. The method's authors chose outlines by hand, and `--box` is the equivalent here. Several lights, a nearby light, shiny surfaces, cast shadows and a change of material along the outline all break the model, so a flagged object is a lead to examine with the other tools, not a verdict.
+
+## Demosaicing traces (CFA)
+
+```bash
+exif-inspect cfa photo.png            # writes photo_cfa.png when a region lacks the trace
+```
+
+A camera sensor records one colour per pixel through a Bayer filter, half of them green on a checkerboard, and the demosaicing step fills in the other half of the green channel from its neighbours. Those filled-in pixels are predicted far better by their neighbours than the measured ones, so the two lattices of the checkerboard have very different prediction residuals (Ferrara, Bianchi, De Rosa and Piva, [Image forgery localization via fine-grained analysis of CFA artifacts](https://ieeexplore.ieee.org/document/6210378), 2012). The tool predicts every green pixel from its four neighbours, squares the residual, and in 32-pixel blocks takes the log ratio `L` of its mean on the two lattices. Clipped pixels and their neighbours are left out.
+
+- **Whole picture.** The median `L` over blocks with enough residual gives the trace: *strong* when at least 0.5 in size, *weak* when small but of the same sign in at least 75% of the blocks (a sign test at 5 standard deviations), *none* otherwise. Its sign names the interpolated lattice. A picture that was resized, rotated or heavily compressed after demosaicing, or that never went through it (a rendering, a screenshot, a generated image), shows none.
+- **By region.** JPEG and sensor noise add the same error to both lattices, so `L` shrinks toward zero where the picture's own residual is small. Rather than one threshold, the tool learns from the picture how `L` depends on residual power (the median in each of 8 power bins, kept monotone) and flags blocks whose `L` is below 0.15 while sitting more than 3 spreads under what their power predicts. Blocks whose predicted `L` is under 0.5 cannot be judged. Four or more connected flagged blocks are reported as a region and tinted red in the output picture; a region pasted from another source, resized, generated, or shifted by an odd number of pixels against the grid lacks the trace or carries it the other way round.
+
+**Evaluation**, on 9 scikit-image sample pictures halved in size (which removes whatever traces they had), sampled through an RGGB mosaic and demosaiced bilinearly:
+
+| Test | Result |
+|---|---|
+| untouched, saved as PNG and at JPEG quality 95, 90, 80, 70 (45 files) | no region flagged; the trace reads strong in every PNG and at quality 95, weak down to quality 70 or 80, none in the two smoothest pictures at 80 and below |
+| the same pictures before demosaicing (4 files) | none |
+| a 128x96 patch pasted from the picture before demosaicing, from a copy shifted one pixel sideways, or from a copy resized 1.3 times (27 forgeries per quality) | located in 22 of 27 as PNG, 20 of 27 at quality 95, 11 of 27 at quality 90; the retina picture is too smooth to judge anywhere |
+
+Real camera files are another matter. Of the 89 JPEGs in the [exif-samples](https://github.com/ianare/exif-samples) collection, 85 show no trace at all, including recent phones saved at quality 95: noise reduction, sharpening, multi-frame processing and JPEG itself wipe out the lattice difference. Three show a weak one, and one, a Canon IXUS 40 photo re-saved by Windows Photo Gallery near quality 96, shows a strong trace with one flagged region of five blocks at the edge of a blown-out white band, which is a false alarm. So a missing trace says nothing on its own, and the tool is for pictures that kept theirs: raw conversions exported as PNG, TIFF or high-quality JPEG, scans, and lab images. Where the trace is there, a region without it is hard to explain innocently.
 
 ## Cases behind the checks
 
