@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. It prints the EXIF metadata of images, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -238,6 +238,32 @@ A camera sensor records one colour per pixel through a Bayer filter, half of the
 | a 128x96 patch pasted from the picture before demosaicing, from a copy shifted one pixel sideways, or from a copy resized 1.3 times (27 forgeries per quality) | located in 22 of 27 as PNG, 20 of 27 at quality 95, 11 of 27 at quality 90; the retina picture is too smooth to judge anywhere |
 
 Real camera files are another matter. Of the 89 JPEGs in the [exif-samples](https://github.com/ianare/exif-samples) collection, 85 show no trace at all, including recent phones saved at quality 95: noise reduction, sharpening, multi-frame processing and JPEG itself wipe out the lattice difference. Three show a weak one, and one, a Canon IXUS 40 photo re-saved by Windows Photo Gallery near quality 96, shows a strong trace with one flagged region of five blocks at the edge of a blown-out white band, which is a false alarm. So a missing trace says nothing on its own, and the tool is for pictures that kept theirs: raw conversions exported as PNG, TIFF or high-quality JPEG, scans, and lab images. Where the trace is there, a region without it is hard to explain innocently.
+
+## Noise level
+
+```bash
+exif-inspect noise photo.jpg          # writes photo_noise.png when a region stands out
+```
+
+A sensor adds noise to every pixel it records, and in one exposure that noise has one level, rising gently with brightness. A region pasted in from another photograph brings its own level, and a region that was smoothed, painted or filled by software has almost none (Mahdian and Saic, [Using noise inconsistencies for blind image forensics](https://doi.org/10.1016/j.imavis.2009.02.001), 2009). The tool measures the noise in 32-pixel blocks and compares each block with the blocks it should resemble.
+
+- **Measuring.** The noise of a block is the smallest eigenvalue of the covariance of its 5x5 patches that lie on flat pixels: the picture's own content fills the leading components, noise alone reaches every component, so the smallest one is the noise floor (Pyatykh, Hesser and Zheng, 2013, with the weak-texture patch selection of Liu, Tanaka and Okutomi, 2013). Flat pixels and the block's texture are measured on a copy blurred three times, where noise is almost gone, so that a noisy region is not mistaken for texture. A block with fewer than 150 flat patches is not judged.
+- **Comparing.** Some texture leaks into any local estimate and sensor noise grows with brightness, so the level an untouched block should show is learned from the picture itself: the median over blocks of similar texture (6 bins, interpolated) and, when there are enough blocks, similar brightness (3 bins). The busiest tenth of the blocks is left out, since the curve has nothing beyond them. A block is flagged when it differs from its prediction by a factor of 1.8, by 1.5 grey levels, and by three times the picture's own scatter. Six or more connected flagged blocks are reported as a region, red when noisier and blue when smoother than its peers.
+
+The report also gives the picture's noise level, taken over its quietest third, and whether it rises with brightness.
+
+**Evaluation**, on 10 scikit-image sample pictures with Gaussian noise of 4 grey levels added, then a 128x96 patch given noise of its own:
+
+| Test | PNG | JPEG 95 | JPEG 90 | JPEG 80 |
+|---|---|---|---|---|
+| untouched (10 pictures per quality): regions flagged | 0 | 0 | 0 | 0 |
+| patch with noise 12, located | 7 of 10 | 6 | 7 | 6 |
+| patch with noise 8, located | 3 of 10 | 4 | 5 | 1 |
+| patch with no noise (smoothed), located | 3 of 10 | 4 | 0 | 0 |
+
+A noisier patch is found in most pictures and survives compression, because the extra noise is larger than what JPEG removes. A smoothed patch is found only where the picture around it is quiet: in textured content the estimate's floor of 2 to 4 grey levels hides the difference, and from JPEG quality 90 down the picture's own noise is mostly gone too, so the picture is as smooth as the patch.
+
+On 63 untouched camera JPEGs from the exif-samples collection (300 pixels or more on each side), 7 had a region flagged: grainy pictures from an old Nikon compact where leaves and sky came out smoother than their peers, and a dark corner of foliage in a phone HDR picture that came out noisier. In-camera noise reduction works hardest on smooth areas and leaves dark busy ones alone, so a real photograph is not perfectly even either, and a flagged region is a lead to check with the other tools rather than a verdict. The noise of a region that was blurred, cloned over or filled by AI is often the only pixel-level trace left, which is what the tool is for.
 
 ## Cases behind the checks
 
