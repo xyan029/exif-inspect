@@ -498,6 +498,62 @@ def light_main(argv: list[str]) -> int:
     return exit_code
 
 
+def cfa_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import cfa
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect cfa",
+        description="Look for the traces that demosaicing leaves in the green channel, "
+                    "and for regions that lack them.",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_cfa.png, written "
+                             "when a region lacks the trace)")
+    parser.add_argument("--block", type=int, default=cfa.BLOCK,
+                        help=f"analysis block in pixels, even (default: {cfa.BLOCK})")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+    if args.block < 8 or args.block % 2:
+        parser.error("--block must be an even number of at least 8")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = cfa.analyze(src, block=args.block)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if res.trace == "none":
+            print(f"   no demosaicing trace (lattice ratio {res.strength:+.2f}, "
+                  f"{res.agreement:.0%} of blocks agree): the picture was resized, "
+                  "recompressed, processed or generated after any demosaicing, or never "
+                  "went through it. Most camera and phone JPEGs show none.\n")
+            continue
+        print(f"   demosaicing trace : {res.trace} (lattice ratio {res.strength:+.2f}, "
+              f"{res.agreement:.0%} of blocks agree), interpolated green pixels at {res.lattice}")
+        print(f"   checkable : {res.judged_fraction:.0%} of the picture carries enough of the "
+              "trace to judge a block")
+        if res.box:
+            print(f"   ! trace missing around {res.box} ({res.flagged_fraction:.0%} of checkable "
+                  "blocks): that area was pasted, resized, shifted or generated after the "
+                  "rest was demosaiced")
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_cfa.png")
+            cfa.render(res).save(out)
+            print(f"   output : {out} (red = trace missing, dimmed = cannot judge, "
+                  "white frame = area analysed)")
+        else:
+            print("   no region lacks the trace")
+        print()
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -512,12 +568,14 @@ def main(argv: list[str] | None = None) -> int:
         return ghost_main(argv[1:])
     if argv and argv[0] == "light":
         return light_main(argv[1:])
+    if argv and argv[0] == "cfa":
+        return cfa_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
-               "direction), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
+               "direction), cfa (demosaicing traces), copymove, thumbnail, prnu; see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
