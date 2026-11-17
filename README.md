@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, relates two versions of a picture, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -83,6 +83,7 @@ exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 exif-inspect stego photo.png           # bytes after the picture, LSB steganalysis
+exif-inspect compare a.jpg b.jpg       # how two versions of a picture relate
 exif-inspect report photo.jpg          # everything above in one HTML page
 ```
 
@@ -349,6 +350,27 @@ The other place is inside the pixels. Replacing the least significant bit of eac
 The chi-square attack on its own is not trusted for a verdict: on these pictures, several of which were JPEGs once, it reads clean pictures as largely embedded, which is its known weakness on noisy or previously compressed content. It only adds the position of a payload that RS has already found.
 
 Steganography that keeps the statistics (matrix embedding, adaptive schemes such as HUGO or S-UNIWARD) and steganography in JPEG coefficients (JSteg, F5, OutGuess, Steghide) are not covered: RS sees plain LSB replacement, the kind most "hide a message in a picture" tools use.
+
+## Comparing two versions
+
+```bash
+exif-inspect compare original.jpg forwarded.jpg       # writes original_vs_forwarded.png
+```
+
+Given two files, the smaller scene is searched for inside the larger one at every position, at scales down to a fifth of the frame and at the four rotations, with the normalised cross-correlation that also places the EXIF thumbnail. The best placement gives the crop box and the scale factor between the two. The pair is then aligned at full resolution, brightness and contrast matched, and compared in 16-pixel blocks: blocks that differ by more than four spreads of the block differences and at least 10 grey levels are the edits between the versions, reported as boxes in the container's coordinates and drawn in orange.
+
+```
+== parent.jpg  vs  child.jpg
+   * format        A: JPEG 600x400                     B: JPEG 330x240
+   * jpeg quality  A: 92                               B: 78
+   * camera        A: Canon EOS R6                     B: -
+   match : B is a crop of A: box (120, 60, 560, 380), 59% of the frame, scaled 0.75x (down); correlation 0.992
+   ! changed : 2 region(s) differ beyond resampling and compression noise (4.8% of the shared area):
+       (440, 220, 520, 332) in A
+   parent : A came first: A shows more of the scene; B covers 59% of it
+```
+
+Which file is the parent is read from the evidence in order: the one whose frame contains the other; else the one with more pixels; else the one saved at higher JPEG quality; else the one with more of its metadata left; else the one modified earlier. The reason is printed, since each can be forged: a crop can be upscaled past the original, and metadata can be copied across. Placements covering under a quarter of the frame need a correlation of 0.75 instead of 0.6 and a side of at least 40 pixels at analysis size, because a small patch of noise matches anywhere. Two pictures that place with a correlation of 0.97 or better, at the same size and with no changed region, are reported as the same picture.
 
 ## Cases behind the checks
 

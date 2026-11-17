@@ -14,6 +14,7 @@
 - [[Thumbnail and Gain Map]]
 - [[Camera Identification]]
 - [[Hidden Data]]
+- [[Comparing Two Versions]]
 - [[HTML Report]]
 
 **More**
