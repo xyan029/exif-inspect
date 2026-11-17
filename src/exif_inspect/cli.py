@@ -801,6 +801,65 @@ def stego_main(argv: list[str]) -> int:
     return exit_code
 
 
+def compare_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import compare as cmp
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect compare",
+        description="Relate two versions of a picture: where one sits inside the other, "
+                    "what changed between them, and which is the parent.",
+    )
+    parser.add_argument("a", help="first image")
+    parser.add_argument("b", help="second image")
+    parser.add_argument("-o", "--output", help="output PNG (default: <a>_vs_<b>.png)")
+    args = parser.parse_args(argv)
+    a, b = Path(args.a), Path(args.b)
+    print(f"== {a}  vs  {b}")
+    try:
+        res = cmp.compare(a, b)
+    except Exception as exc:
+        print(f"   error  : {exc}\n")
+        return 1
+    for key, va, vb in res.metadata:
+        mark = " " if va == vb else "*"
+        print(f"   {mark} {key:<13} A: {va or '-':<32} B: {vb or '-'}")
+    p = res.placement
+    if p is None:
+        print("   the two pictures do not show the same scene (no placement above "
+              f"correlation {cmp.MIN_NCC})\n")
+        return 0
+    other = "B" if p.container == "a" else "A"
+    turn = f", turned {p.rotation} degrees" if p.rotation else ""
+    if p.cover >= 0.97:
+        frame = f"{other} shows the same framing as {p.container.upper()}"
+    else:
+        frame = (f"{other} is a crop of {p.container.upper()}: box {p.box}, "
+                 f"{p.cover:.0%} of the frame")
+    scale = ("at the same size" if abs(p.scale - 1) < 0.03 else
+             f"scaled {p.scale:.2f}x ({'up' if p.scale > 1 else 'down'})")
+    print(f"   match : {frame}, {scale}{turn}; correlation {p.ncc:.3f}")
+    if res.same:
+        print("   same  : the pictures are the same within compression noise")
+    elif res.changes:
+        print(f"   ! changed : {len(res.changes)} region(s) differ beyond resampling and compression "
+              f"noise ({res.changed_fraction:.1%} of the shared area):")
+        for box in res.changes:
+            print(f"       {box} in {p.container.upper()}")
+    else:
+        print("   changed : no region differs beyond resampling and compression noise")
+    if res.parent:
+        print(f"   parent : {res.parent.upper()} came first: {'; '.join(res.reasons)}")
+    else:
+        print(f"   parent : undecided: {'; '.join(res.reasons)}")
+    out = Path(args.output) if args.output else a.with_name(f"{a.stem}_vs_{b.stem}.png")
+    res.picture.save(out)
+    print(f"   output : {out} (container with the other's frame in cyan and changes in orange, "
+          "the other picture, the difference)\n")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -825,13 +884,16 @@ def main(argv: list[str] | None = None) -> int:
         return report_main(argv[1:])
     if argv and argv[0] == "stego":
         return stego_main(argv[1:])
+    if argv and argv[0] == "compare":
+        return compare_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
                "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
-               "stego (hidden data), copymove, thumbnail, prnu, report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
+               "stego (hidden data), compare (two versions of a picture), copymove, thumbnail, prnu, "
+               "report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",
