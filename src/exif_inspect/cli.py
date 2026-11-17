@@ -860,6 +860,55 @@ def compare_main(argv: list[str]) -> int:
     return 0
 
 
+def dupes_main(argv: list[str]) -> int:
+    from . import dupes
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect dupes",
+        description="Find duplicate and near-duplicate pictures across folders and name the "
+                    "likely original in each group.",
+    )
+    parser.add_argument("paths", nargs="+", help="folders (searched recursively) or files")
+    parser.add_argument("--distance", type=int, default=dupes.DISTANCE,
+                        help=f"perceptual-hash bits that may differ within a group "
+                             f"(default: {dupes.DISTANCE}; 0 for near-identical pictures only)")
+    parser.add_argument("--json", action="store_true", help="emit the groups as JSON")
+    args = parser.parse_args(argv)
+    if not 0 <= args.distance <= 32:
+        parser.error("--distance must be between 0 and 32")
+
+    res = dupes.find(args.paths, max_distance=args.distance)
+    if args.json:
+        import json
+        from dataclasses import asdict
+        out = {"scanned": res.scanned, "singles": res.singles, "unreadable": res.unreadable,
+               "groups": [{"exact": g.exact, "best": g.best.path,
+                           "members": [{**{k: v for k, v in asdict(m).items()
+                                           if k not in ("phash", "dhash")},
+                                        "distance": g.distances[m.path]} for m in g.members]}
+                          for g in res.groups]}
+        json.dump(out, sys.stdout, indent=2, default=str)
+        print()
+        return 0
+    print(f"scanned {res.scanned} file(s): {len(res.groups)} group(s) of duplicates, "
+          f"{res.singles} single(s), {len(res.unreadable)} unreadable")
+    for n, g in enumerate(res.groups, 1):
+        kind = "identical bytes" if g.exact else f"within {args.distance} hash bits"
+        print(f"\n== group {n}: {len(g.members)} files, {kind}")
+        for m in g.members:
+            dp, dd, rot = g.distances[m.path]
+            star = "*" if m is g.best else " "
+            q = f"q{m.quality}" if m.quality else "-"
+            turn = f", turned {rot}" if rot else ""
+            same = "same bytes" if m.sha256 == g.best.sha256 and m is not g.best else f"distance {dp}/{dd}{turn}"
+            print(f"   {star} {m.path}")
+            print(f"       {m.fmt} {m.size[0]}x{m.size[1]}, {q}, {m.tags} EXIF tags, "
+                  f"{m.bytes // 1024} KB; {same if m is not g.best else 'likely original'}")
+    for path, err in res.unreadable:
+        print(f"\n   unreadable {path}: {err}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -886,13 +935,16 @@ def main(argv: list[str] | None = None) -> int:
         return stego_main(argv[1:])
     if argv and argv[0] == "compare":
         return compare_main(argv[1:])
+    if argv and argv[0] == "dupes":
+        return dupes_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
                "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
-               "stego (hidden data), compare (two versions of a picture), copymove, thumbnail, prnu, "
+               "stego (hidden data), compare (two versions of a picture), dupes (duplicates across "
+               "folders), copymove, thumbnail, prnu, "
                "report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")

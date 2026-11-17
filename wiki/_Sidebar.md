@@ -15,6 +15,7 @@
 - [[Camera Identification]]
 - [[Hidden Data]]
 - [[Comparing Two Versions]]
+- [[Duplicates Across Folders]]
 - [[HTML Report]]
 
 **More**
