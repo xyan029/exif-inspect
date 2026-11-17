@@ -74,6 +74,10 @@ def _print_text(report, findings, show_all: bool) -> None:
         scale = f"{sx:.2f}" if abs(sx - sy) < 0.01 else f"{sx:.2f}x{sy:.2f}"
         print(f"   gain map : {g.size[0]}x{g.size[1]} ({g.kind}, {g.container}), scale {scale}")
 
+    t = report.trailer
+    if t is not None:
+        print(f"   trailer : {t.size} bytes after the image, {t.kind}")
+
     x = report.xmp
     if x.present:
         parts = [f"{x.size} bytes in {x.container}"]
@@ -732,6 +736,71 @@ def report_main(argv: list[str]) -> int:
     return exit_code
 
 
+def stego_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import hidden
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect stego",
+        description="Look for data hidden in a file: bytes after the end of the picture, and "
+                    "a payload in the lowest bits of a lossless picture (LSB steganography).",
+    )
+    parser.add_argument("images", nargs="+", help="image files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG of the LSB planes (single image only; "
+                             "default: <name>_lsb.png)")
+    parser.add_argument("--extract", action="store_true",
+                        help="also save the trailing bytes as <name>_trailer.bin")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        report = read_image(src)
+        if report.error:
+            print(f"   error  : {report.error}\n")
+            exit_code = 1
+            continue
+        t = report.trailer
+        if t is None:
+            print("   trailer : nothing after the end of the image")
+        else:
+            mark = "-" if t.expected else "!"
+            print(f"   {mark} trailer : {t.size} bytes after the image at offset {t.offset}, "
+                  f"{t.kind}; starts {t.sample!r}")
+            if args.extract and not t.expected:
+                out = src.with_name(f"{src.stem}_trailer.bin")
+                out.write_bytes(src.read_bytes()[t.offset:])
+                print(f"   saved   : {out}")
+        if report.format in ("JPEG", "MPO"):
+            print("   lsb     : not applicable to JPEG, which stores no pixel samples\n")
+            continue
+        try:
+            res = hidden.analyze_lsb(src)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        print(f"   lsb     : {res.channels} channel(s), {res.samples} samples; ones {res.lsb_mean:.1%}, "
+              f"entropy {res.lsb_entropy:.2f} bits per byte (8.00 is pure noise)")
+        per = ", ".join(f"{r:.0%}" for r in res.rs_per_channel)
+        print(f"   RS      : about {res.rs_rate:.0%} of the samples carry a random payload "
+              f"(per channel {per})")
+        prefix = res.chi_prefix / res.samples if res.samples else 0.0
+        print(f"   chi-sq  : {res.chi_embedded:.0%} of the scan reads as embedded; the first "
+              f"{prefix:.0%} in one run")
+        verdict = hidden.verdict(res)
+        print(f"   {'!' if verdict.flag else '-'} {verdict.message}")
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_lsb.png")
+        res.planes.save(out)
+        print(f"   output  : {out} (lowest bit of each channel, white = 1)\n")
+    return exit_code
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = sys.argv[1:] if argv is None else argv
     if argv and argv[0] == "prnu":
@@ -754,13 +823,15 @@ def main(argv: list[str] | None = None) -> int:
         return xmp_main(argv[1:])
     if argv and argv[0] == "report":
         return report_main(argv[1:])
+    if argv and argv[0] == "stego":
+        return stego_main(argv[1:])
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
                "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
-               "copymove, thumbnail, prnu, report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
+               "stego (hidden data), copymove, thumbnail, prnu, report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
     )
     parser.add_argument("images", nargs="+", help="image files to inspect")
     parser.add_argument("-a", "--all", action="store_true",

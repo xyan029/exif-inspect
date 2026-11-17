@@ -14,6 +14,8 @@ Every code the main report (`exif-inspect photo.jpg`) can print, grouped by what
 | `tables_contradict_exif` | EXIF names a camera but the tables belong to other software | The file was re-saved by software after the camera; the camera's own encoder uses its own tables |
 | `makernote_missing` | EXIF names a camera but has no MakerNote | Cameras and phones always write one; it is dropped by most editors and never added by hand |
 | `dimension_mismatch` | EXIF width and height differ from the real size | Cropped or resized after capture; rotation is accounted for |
+| `trailing_data` | Bytes follow the end of the picture | Something appended: the kind (archive, image, text) and a preview are shown; `stego --extract` saves it |
+| `trailing_image` | A second JPEG after the first, announced by an MPF segment | A gain map or extra frame, as iPhones write |
 
 ## Times and places
 

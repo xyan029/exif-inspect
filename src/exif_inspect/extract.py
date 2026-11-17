@@ -23,6 +23,8 @@ from .thumbnail import ThumbInfo
 from .thumbnail import analyze as analyze_thumbnail
 from .xmp import XmpInfo
 from .xmp import read as read_xmp
+from .hidden import Trailer
+from .hidden import trailer as find_trailer
 
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
@@ -48,6 +50,7 @@ class ImageReport:
     thumbnail: ThumbInfo | None = None
     gain_map: GainMapInfo | None = None
     xmp: XmpInfo = field(default_factory=XmpInfo)
+    trailer: Trailer | None = None
     error: str | None = None
 
     @property
@@ -162,6 +165,10 @@ def read_image(path: str | Path) -> ImageReport:
         report.xmp = read_xmp(data, report.format, img_info)
     except Exception:  # a damaged packet should not sink the report
         report.xmp = XmpInfo()
+    try:
+        report.trailer = find_trailer(data, report.format)
+    except Exception:
+        report.trailer = None
     report.jpeg_quant = jpeg_quant
     report.thumbnail = thumbnail
     try:

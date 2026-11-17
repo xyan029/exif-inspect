@@ -13,6 +13,7 @@
 - [[Lighting]]
 - [[Thumbnail and Gain Map]]
 - [[Camera Identification]]
+- [[Hidden Data]]
 - [[HTML Report]]
 
 **More**
