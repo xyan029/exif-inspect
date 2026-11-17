@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -47,6 +47,8 @@ For each file:
 | `xmp_crop` | Cropped in Camera Raw, with the share of the frame that was kept |
 | `xmp_ai` | The software, credit or source type in XMP names a generative AI tool |
 | `xmp_date_mismatch` | `xmp:CreateDate` differs from EXIF `DateTimeOriginal`: one of them was rewritten |
+| `trailing_data` | Bytes follow the end of the picture (after JPEG EOI, PNG IEND, the WebP RIFF size or the GIF trailer), with a guess at what they are: an archive, another image, text |
+| `trailing_image` | A second JPEG after the first, announced by an MPF segment (gain map or extra frame) |
 | `unreadable` | The file could not be opened as an image |
 
 ### Provenance signals
@@ -80,6 +82,7 @@ exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
+exif-inspect stego photo.png           # bytes after the picture, LSB steganalysis
 exif-inspect report photo.jpg          # everything above in one HTML page
 ```
 
@@ -318,6 +321,34 @@ exif-inspect report --grid -o out.html photo.jpg    # slower ghost search, chose
 ```
 
 One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `cfa`, `noise`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
+
+## Hidden data
+
+```bash
+exif-inspect stego photo.png              # trailer and LSB steganalysis, writes photo_lsb.png
+exif-inspect stego --extract photo.jpg    # also saves the bytes after the picture as photo_trailer.bin
+```
+
+Two places to hide things in an image file. The simplest is after the picture: every viewer stops reading a JPEG at its EOI marker, a PNG at its IEND chunk, a WebP at the end of its RIFF container and a GIF at its trailer byte, so whatever follows rides along unseen. The main report checks every file for this (`trailing_data`), says how many bytes there are and what they look like (ZIP and other archives, another image, PDF, executables, XML, plain text), and `stego --extract` saves them. A second JPEG that an MPF segment announces, such as an iPhone's gain map, is reported as expected (`trailing_image`).
+
+The other place is inside the pixels. Replacing the least significant bit of each sample changes the picture by at most one grey level, invisibly, but it changes the statistics of the sample values. For lossless pictures (PNG, BMP, TIFF, GIF; JPEG stores no samples) the subcommand gives three views:
+
+- **The LSB planes as a picture.** A natural image's lowest bit still follows the content: smooth areas show contour-like bands, textures show structure. An embedded payload is pure noise. The picture written next to the input shows the lowest bit of each channel side by side.
+- **RS analysis** (Fridrich, Goljan and Du, 2001). Pixels are taken in groups of four; flipping the lowest bits of two of them by the mask makes some groups noisier (regular) and some smoother (singular), and in a clean picture the counts barely depend on the direction of the flip. A payload erodes that asymmetry in a known way, and the quadratic Fridrich derived turns the four counts into an estimate of how many samples carry random bits. The estimate is reported per channel and averaged; from 5% up a payload is flagged.
+- **The chi-square attack** (Westfeld and Pfitzmann, 1999) over consecutive blocks of 4096 samples in scan order. Embedding evens out the counts of each pair of values 2k and 2k+1, so a payload written from the top of the picture shows as a run of blocks where the test fires. The run is reported as a share of the scan and, when it agrees with the RS estimate, the payload is placed "from the start of the picture".
+
+**Evaluation**, on 12 scikit-image sample pictures with random bits written into the lowest bits:
+
+| Payload | RS estimate |
+|---|---|
+| none | 0.00 to 0.02 |
+| 10% of the samples, at random | 0.08 to 0.12 |
+| 50% of the samples, at random | 0.46 to 0.52 |
+| every sample | 0.94 to 1.00 |
+
+The chi-square attack on its own is not trusted for a verdict: on these pictures, several of which were JPEGs once, it reads clean pictures as largely embedded, which is its known weakness on noisy or previously compressed content. It only adds the position of a payload that RS has already found.
+
+Steganography that keeps the statistics (matrix embedding, adaptive schemes such as HUGO or S-UNIWARD) and steganography in JPEG coefficients (JSteg, F5, OutGuess, Steghide) are not covered: RS sees plain LSB replacement, the kind most "hide a message in a picture" tools use.
 
 ## Cases behind the checks
 

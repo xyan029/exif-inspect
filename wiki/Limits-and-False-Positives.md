@@ -18,6 +18,8 @@ What each method needs, what destroys its signal, and what makes it say somethin
 | Lighting | Outlines of convex, matte objects under one distant light | Several lights, a nearby light, shiny surfaces, cast shadows, a change of material along the outline | Rims, folds, lips and material edges picked as outlines (the automatic mode says "no consensus" rather than flagging) |
 | PRNU | 20 or more flat shots from the same camera, lens, resolution and mode | Resizing (even to 90%), strong compression, multi-frame modes, a different lens of the same phone | A busy or dark region, where no pattern was ever visible (marked "cannot judge") |
 | XMP | A packet the last program kept | Everything that strips metadata | Anything, since it is plain text that anyone can edit |
+| Trailing data | The original file | Any re-encoding | None worth the name; an MPF second image is reported as expected |
+| LSB steganalysis (RS) | A lossless picture with plain LSB replacement | JPEG (no samples), adaptive or matrix embedding, resaving the picture | Clean pictures stay under 3% |
 
 ## How much compression each pixel method survives
 

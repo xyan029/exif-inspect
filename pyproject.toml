@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "exif-inspect"
 version = "0.6.0"
-description = "EXIF and XMP metadata, provenance signals, forensic hints, error level analysis, JPEG ghosts, lighting, demosaicing and noise checks for images, with an HTML report."
+description = "EXIF and XMP metadata, provenance signals, forensic hints, error level analysis, JPEG ghosts, lighting, demosaicing, noise and hidden-data checks for images, with an HTML report."
 readme = "README.md"
 license = "MIT"
 authors = [{ name = "Xiaoyu Yan" }]

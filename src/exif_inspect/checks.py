@@ -315,6 +315,20 @@ def _exif_date(value) -> str | None:
     return f"{m.group(1)}-{m.group(2)}-{m.group(3)} {m.group(4)}:{m.group(5)}:{m.group(6)}" if m else None
 
 
+def _trailer_check(report: ImageReport) -> Finding | None:
+    t = report.trailer
+    if t is None:
+        return None
+    if t.expected:
+        return Finding("info", "trailing_image",
+                       f"{t.size} bytes after the first image: a second JPEG announced by the "
+                       "MPF segment (gain map or extra frame).")
+    return Finding("flag", "trailing_data",
+                   f"{t.size} bytes follow the end of the image at offset {t.offset}: "
+                   f"{t.kind}. Viewers never show them; something was appended to the file "
+                   f"(starts {t.sample[:24]!r}).")
+
+
 def _xmp_checks(report: ImageReport) -> list[Finding]:
     x = report.xmp
     if not x.present:
@@ -372,7 +386,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
 
     findings: list[Finding] = []
-    for check in (_extension_check, _dimension_check, _quant_check):
+    for check in (_extension_check, _dimension_check, _quant_check, _trailer_check):
         result = check(report)
         if result:
             findings.append(result)
