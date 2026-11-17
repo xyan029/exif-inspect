@@ -12,5 +12,6 @@
 - **PCE, peak-to-correlation energy**: the score of a PRNU match, how sharply the correlation peaks at zero shift; 60 or more reads as the same camera here.
 - **PRNU, photo-response non-uniformity**: the fixed pattern of pixel sensitivities of one sensor, a fingerprint of one physical camera.
 - **Quantization tables**: the step sizes a JPEG encoder used for each frequency; they identify the encoder and, for libjpeg, the exact quality.
+- **Resampling**: computing a picture's pixels anew on a different grid, as resizing and turning do. The interpolation leaves a periodic pattern that `resample` measures.
 - **Residual**: what is left of a picture after its content is predicted away; noise and interpolation traces live in it.
 - **XMP**: Adobe's XML metadata packet, where editors keep history, settings and IDs.

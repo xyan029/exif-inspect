@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture, in its lowest bits or in its JPEG coefficients, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds the traces of resizing and turning in the whole picture or in one region, finds data hidden after the picture, in its lowest bits or in its JPEG coefficients, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -81,6 +81,7 @@ pip install -e ".[heic]"
 exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
+exif-inspect resample photo.png        # traces of resizing and turning, by region
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 exif-inspect stego photo.png           # bytes after the picture, LSB and JPEG-coefficient steganalysis
 exif-inspect compare a.jpg b.jpg       # how two versions of a picture relate
@@ -281,6 +282,79 @@ A noisier patch is found in most pictures and survives compression, because the 
 
 On 63 untouched camera JPEGs from the exif-samples collection (300 pixels or more on each side), 7 had a region flagged: grainy pictures from an old Nikon compact where leaves and sky came out smoother than their peers, and a dark corner of foliage in a phone HDR picture that came out noisier. In-camera noise reduction works hardest on smooth areas and leaves dark busy ones alone, so a real photograph is not perfectly even either, and a flagged region is a lead to check with the other tools rather than a verdict. The noise of a region that was blurred, cloned over or filled by AI is often the only pixel-level trace left, which is what the tool is for.
 
+## Resizing and turning
+
+```bash
+exif-inspect resample photo.png       # writes photo_resample.png when a trace is found
+```
+
+Enlarging, shrinking or turning a picture computes every new pixel from a few old ones. How much a new pixel owes to its neighbours depends on where it falls between the old ones, and that position repeats: after enlarging by 1.25, every fifth pixel sits exactly on an old one. The picture then carries a periodic pattern in how well each pixel is predicted by its neighbours (Popescu and Farid, [Exposing digital forgeries by detecting traces of resampling](https://doi.org/10.1109/TSP.2004.839932), 2005), and a fixed predictor is enough to show it as sharp peaks in the spectrum of the prediction error (Kirchner, [Fast and reliable resampling detection by spectral analysis of fixed linear predictor residue](https://doi.org/10.1145/1411328.1411333), 2008). An object scaled to fit before it is pasted in carries the pattern on its own, so the tool reports where the trace is as well as whether it is there.
+
+- **Peaks.** Each pixel is predicted from its eight neighbours and the size of the error is kept. Its spectrum is averaged over half-overlapping tiles, 256 pixels wide where the picture has 30 of them and 128 or 64 otherwise, and every frequency is compared with the median of its surroundings, of its row and of its column. A peak counts when it stands 2 times above that and 8 spreads of the spectrum's own scatter, and lies at least 0.07 cycles per pixel from zero. Cloth, brick and print are periodic too, so where the picture's own spectrum rises, the peak in the error must be 4 times higher still.
+- **Reading.** A peak at frequency `f` on an axis comes from enlarging by `1/(1-f)` or `1/f`, from reducing to `1/(1+f)`, or, when `f` is small, from a turn by `asin(f)`; all of them are printed. A peak off the axes that fits a pure turn is read as its angle.
+- **JPEG blocks.** A picture resized after a JPEG save keeps that save's 8-pixel blocks, stretched by the factor. They show as a comb, peaks at two or more multiples of one frequency, and the comb gives the factor directly: blocks 10.0 pixels wide mean 1.25x. Reductions leave little interpolation trace, and the comb is how most of them are found.
+- **By region.** The peaks' height is measured in every 64-pixel tile against the tile's own spectrum, and smoothed by a median over the tile and its neighbours. When half of the tiles carry the trace it belongs to the picture; otherwise six or more connected tiles are reported as a region and tinted red. A faint trace everywhere is told from a strong one in one place by a sign test on the other tiles, since chance lifts a frequency above its surroundings in half of them. When the whole picture's spectrum shows nothing, each tile votes for its own strongest frequency, and a connected group voting alike is tested as a region of its own; only peaks on the axes are accepted there, because an oblique peak in one region is usually a texture.
+
+Three things are out of reach by design. Multiples of 1/8 belong to the file's own JPEG grid and are never counted, which hides the factors whose trace lands there (1.14, 1.33, 1.6, 2.67, 4, 8). At exactly 2x both new pixels of each pair sit a quarter step from an old one, are interpolated alike, and nothing repeats. Factors within 7% of 1 and turns under 4 degrees fall below the lowest frequency read.
+
+A 512-pixel picture with a 224x192 patch of another picture, enlarged 1.5 times, pasted at (216, 304):
+
+```
+== splice.png
+   checkable : 100% of the picture has enough detail to judge
+   ! resampling trace around (192, 256, 480, 512) only (20% of checkable tiles carry it clearly): that area was resized or turned on its own, as an object scaled to fit before pasting is
+     peak at 0.334 cycles per pixel down, 14.3 times its surroundings: enlarged 1.50x (or 3.00x), or reduced to 0.75x
+     peak at 0.332 cycles per pixel across, 10.6 times its surroundings: enlarged 1.50x (or 3.01x), or reduced to 0.75x
+   output : splice_resample.png (red = carries the trace, dimmed = cannot judge, white frame = area analysed)
+```
+
+**Evaluation.** Of 16 scikit-image sample pictures as distributed, three show a trace: the astronaut across the whole picture (peaks at 0.176 on both axes, 11 times their surroundings, which reads as 1.21x), the scanned text (0.352), and one region of the coffee cup. Their history is unknown, so they are left out, and the other 13 (191 to 1411 pixels on the short side) are the untouched set. Saved as PNG and as JPEG at quality 95, 90, 80 and 70, none of the 65 files is flagged.
+
+The whole picture resized with bicubic interpolation, or turned and cropped to its centre; found, and in brackets how many of those carry the true factor or angle among their readings:
+
+| Operation | PNG | JPEG 95 | JPEG 90 |
+|---|---|---|---|
+| enlarged 1.1x | 11 of 13 (11) | 6 (4) | 3 (1) |
+| enlarged 1.25x | 12 (12) | 9 (7) | 6 (2) |
+| enlarged 1.5x | 12 (12) | 9 (8) | 6 (3) |
+| enlarged 1.7x | 12 (12) | 8 (6) | 7 (5) |
+| enlarged 2x | 4 (0) | 1 (0) | 2 (0) |
+| enlarged 3x | 12 (12) | 8 (5) | 8 (1) |
+| reduced to 0.75x | 5 (5) | 0 | 0 |
+| reduced to 0.5x | 0 of 12 | 0 | 0 |
+| turned 5 degrees | 5 of 12 (2) | 2 (1) | 1 (0) |
+| turned 10 degrees | 6 (3) | 1 (1) | 1 (0) |
+| turned 20 degrees | 6 (4) | 0 | 1 (0) |
+| turned 35 degrees | 10 (9) | 7 (7) | 3 (3) |
+| turned 45 degrees | 10 (10) | 8 (7) | 3 (3) |
+
+The picture missed at every enlargement is the colour wheel, a smooth drawing with almost no prediction error to analyse; at 1.1x the scanned page, 191 pixels high, is missed as well. The four found at 2x were JPEGs before: their blocks, now 16 pixels wide, put peaks at odd multiples of 1/16, and the comb's first tooth at 1/16 is below the lowest frequency read, so the factor is not recovered. Three of the five reductions found are read from the comb, and two from an interpolation peak at 1/3 that Pillow's filtered reduction left, strong in the moon picture and faint in the cameraman. Small turns are the weak spot: their peaks are a few times lower than those of a resize in these pictures.
+
+A patch of another sample picture, resized or turned, pasted in at a random place; located means reported as a region that covers at least half of the patch within a box at most four times its area:
+
+| Patch | 128x96, PNG | 128x96, JPEG 95 | 224x192, PNG | 224x192, JPEG 95 |
+|---|---|---|---|---|
+| enlarged 1.25x | 2 of 12 | 0 | 5 of 9 | 0 |
+| enlarged 1.5x | 4 | 0 | 8 | 0 |
+| enlarged 3x | 3 | 0 | 5 | 0 |
+| reduced to 0.75x | 0 | 0 | 1 | 0 |
+| turned 20 degrees | 1 | 0 | 1 | 0 |
+
+No forgery was flagged anywhere other than at its patch. A pasted region is found when it is large, enlarged and the file was saved without loss; one JPEG save at quality 95 after the paste is enough to hide it. That limits the tool to PNG and TIFF exports, screenshots, scans and figures, which is where composites often end up.
+
+Real files, the 65 JPEGs of the [exif-samples](https://github.com/ianare/exif-samples) collection that are at least 128 pixels on each side: 63 show no trace. The other two are the two frames of one iPhone 6 HDR shot, with a faint trace across the picture and a peak at 0.493 on both axes, which reads as 1.97x or 2.03x. The picture is soft in the way a digitally zoomed phone picture is, and a camera that zooms, corrects its lens or aligns frames does resample; the tool cannot tell that from an enlargement made afterwards.
+
+The 63 clean ones resized afterwards, which is what happens to most pictures on their way to a slide or a web page; found, and in brackets with the true factor among the readings, then with the comb giving it:
+
+| Resized | PNG | JPEG 95 | JPEG 90 |
+|---|---|---|---|
+| 1.25x | 61 of 63 (61, comb 42) | 52 (32, comb 3) | 33 (23, comb 0) |
+| 1.5x | 61 (61, comb 38) | 57 (35, comb 1) | 52 (14, comb 0) |
+| 0.8x | 31 (28, comb 28) | 2 (1, comb 1) | 1 (0) |
+| 0.5x | 3 of 61 (0) | 1 (0) | 0 |
+
+Real pictures do better than the samples after a JPEG save because the first save's blocks add their own peaks, and the reading suffers for the same reason: a tooth of the comb read alone gives a wrong factor, so after a lossy save the verdict that the picture was resized is more reliable than the factor printed with it. Halving turns 8-pixel blocks into 4-pixel ones, which land on the grid and stay hidden.
+
 ## XMP editing history
 
 ```bash
@@ -322,7 +396,7 @@ exif-inspect report --skip light,copymove photo.jpg # leave tools out
 exif-inspect report --grid -o out.html photo.jpg    # slower ghost search, chosen output path
 ```
 
-One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `cfa`, `noise`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
+One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `cfa`, `noise`, `resample`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
 
 ## Hidden data
 

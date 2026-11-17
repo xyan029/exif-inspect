@@ -66,6 +66,7 @@ exif-inspect ghost photo.jpg
 exif-inspect copymove photo.jpg
 exif-inspect noise photo.jpg
 exif-inspect cfa photo.jpg
+exif-inspect resample photo.png
 exif-inspect light photo.jpg
 exif-inspect thumbnail photo.jpg
 exif-inspect xmp photo.jpg

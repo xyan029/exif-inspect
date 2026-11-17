@@ -15,6 +15,7 @@ What each method needs, what destroys its signal, and what makes it say somethin
 | Copy-move (keypoints) | Enough keypoints in the clone | Smooth content, clones under about 40 pixels in small pictures | Text, logos and printed patterns, where the same shapes really repeat |
 | Demosaicing traces | A picture that kept its traces: raw conversions, PNG or TIFF, JPEG at 95 or better | Camera and phone pipelines (noise reduction, sharpening, multi-frame), JPEG below about 90, any resizing | A region next to blown-out highlights (one in 89 real files) |
 | Noise level | Flat patches in the region, noise larger than what JPEG removed | JPEG below about 90 for faint differences; texture everywhere | In-camera noise reduction, which smooths skies more than foliage; dark corners of HDR phone pictures |
+| Resizing and turning | A lossless file, or JPEG at 95 or better; detail in the region | A JPEG save after the resizing, exactly 2x, factors on the JPEG grid (1.33, 1.6, 4), factors within 7% of 1 | Camera zoom, lens correction and frame alignment, which resample too (one HDR phone shot in 65 real files) |
 | Lighting | Outlines of convex, matte objects under one distant light | Several lights, a nearby light, shiny surfaces, cast shadows, a change of material along the outline | Rims, folds, lips and material edges picked as outlines (the automatic mode says "no consensus" rather than flagging) |
 | PRNU | 20 or more flat shots from the same camera, lens, resolution and mode | Resizing (even to 90%), strong compression, multi-frame modes, a different lens of the same phone | A busy or dark region, where no pattern was ever visible (marked "cannot judge") |
 | XMP | A packet the last program kept | Everything that strips metadata | Anything, since it is plain text that anyone can edit |
@@ -29,6 +30,8 @@ Measured on simulated forgeries in scikit-image sample pictures; details on each
 |---|---|---|---|---|
 | Ghost of a pasted patch (on the grid) | 22 of 27 | 20 of 27 | 11 of 27 | not tested |
 | Demosaicing trace missing in a patch | 22 of 27 | 20 of 27 | 11 of 27 | 0 |
+| Resampling: 224x192 patch enlarged 1.5x | 8 of 9 | 0 | not tested | not tested |
+| Resampling: whole picture enlarged 1.5x | 12 of 13 | 9 of 13 | 6 of 13 | not tested |
 | Noise: patch with three times the noise | 7 of 10 | 6 of 10 | 7 of 10 | 6 of 10 |
 | Noise: smoothed patch | 3 of 10 | 4 of 10 | 0 | 0 |
 | PRNU: same camera at PCE 60 or more (Dresden set) | 14 of 20 | - | re-saved at 76: 7 of 20 | re-saved at 50: 3 of 20 |
@@ -39,5 +42,5 @@ Before writing "no sign of editing", check:
 
 1. Does the file still carry metadata? If not, every metadata check was blind.
 2. What are the JPEG tables? Standard tables at 75 or 76 after a known camera mean a platform re-encoded it; ELA, ghost, CFA and faint noise differences were weakened or erased.
-3. Was it resized? `dimension_mismatch`, `gain_map_misfit` or a size that is not the camera's say yes; PRNU and CFA are then gone.
+3. Was it resized? `dimension_mismatch`, `gain_map_misfit` or a size that is not the camera's say yes; PRNU and CFA are then gone. `resample` can confirm it on a lossless file.
 4. Is the questioned region smooth? Copy-move, noise and lighting cannot judge flat areas, and CFA and PRNU mark them "cannot judge".
