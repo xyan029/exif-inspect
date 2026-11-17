@@ -40,6 +40,7 @@ Open the HTML page. The maps are easier to compare side by side than one at a ti
 | A rectangle brighter than its surroundings in the ELA map | `ghost photo.jpg` and, if nothing, `ghost --grid photo.jpg` | A ghost names the quality the patch was saved at before, which ELA cannot |
 | Two areas that look the same | `copymove photo.jpg`, then `copymove --keypoints photo.jpg` | Block matching gives a shift backed by hundreds of pairs; keypoints find scaled or rotated copies |
 | A smooth area with no noise in the noise map | `cfa photo.jpg`, `xmp photo.jpg` | A smoothed or filled area lacks the demosaicing trace too; Lightroom records its healing areas in XMP |
+| An object that looks too sharp, too soft or the wrong size for its place | `resample photo.png` | An object scaled before pasting carries an interpolation pattern the rest lacks; needs a lossless file |
 | An object that looks pasted in | `light --box ... --box ... photo.jpg` | Compare its light direction with another object's, boxes chosen by you |
 | A region that does not match the camera | `prnu match` and `prnu locate` with a fingerprint of the claimed camera | The only method that ties pixels to one physical camera |
 

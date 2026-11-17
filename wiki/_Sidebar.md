@@ -10,6 +10,7 @@
 - [[ELA and JPEG Ghosts]]
 - [[Copy-Move]]
 - [[Noise and Demosaicing]]
+- [[Resizing and Turning]]
 - [[Lighting]]
 - [[Thumbnail and Gain Map]]
 - [[Camera Identification]]

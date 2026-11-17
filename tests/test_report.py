@@ -48,10 +48,10 @@ def test_skip_and_output(tmp_path, capsys):
     out = tmp_path / "r.html"
     assert main(["report", "--skip", "light,copymove,ghost", "-o", str(out), str(path)]) == 0
     text = capsys.readouterr().out
-    assert "report :" in text and "4 tool section(s)" in text
+    assert "report :" in text and "5 tool section(s)" in text
     page = out.read_text(encoding="utf-8")
     assert "Lighting direction" not in page and "JPEG ghosts" not in page
-    assert "Noise level" in page
+    assert "Noise level" in page and "Resampling traces" in page
 
 
 def test_unknown_skip_is_rejected(tmp_path):

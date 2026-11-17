@@ -28,12 +28,13 @@ EMBED_SIDE = 1400        # longest side of an embedded picture
 EMBED_QUALITY = 85
 
 # Order on the page: (key, title, how to run it).
-TOOLS = ("ela", "ghost", "cfa", "noise", "light", "copymove", "thumbnail", "xmp")
+TOOLS = ("ela", "ghost", "cfa", "noise", "resample", "light", "copymove", "thumbnail", "xmp")
 TITLES = {
     "ela": "Error level analysis",
     "ghost": "JPEG ghosts",
     "cfa": "Demosaicing traces",
     "noise": "Noise level",
+    "resample": "Resampling traces",
     "light": "Lighting direction",
     "copymove": "Copy-move detection",
     "thumbnail": "EXIF thumbnail",
@@ -94,7 +95,7 @@ def run_tool(key: str, src: Path, workdir: Path, grid: bool = False) -> Section:
         argv += ["--side-by-side", "-o", str(out)]
     elif key == "ghost":
         argv += ["-o", str(out)] + (["--grid"] if grid else [])
-    elif key in ("cfa", "noise", "light", "copymove"):
+    elif key in ("cfa", "noise", "resample", "light", "copymove"):
         argv += ["-o", str(out)]
     elif key == "thumbnail":
         argv += ["-o", str(out)]
@@ -114,6 +115,7 @@ def _caption(key: str) -> str:
         "ghost": "cyan: region with a JPEG ghost the rest of the picture lacks",
         "cfa": "red: demosaicing trace missing; dimmed: cannot judge",
         "noise": "red: noisier than its peers; blue: smoother; dimmed: cannot judge",
+        "resample": "red: carries the trace of resizing or turning; dimmed: cannot judge",
         "light": "arrows point toward the light; green agrees, red disagrees, yellow: common direction",
         "copymove": "orange: source; cyan: copy",
         "thumbnail": "EXIF thumbnail, main image, difference",

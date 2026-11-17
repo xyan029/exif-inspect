@@ -620,6 +620,79 @@ def noise_main(argv: list[str]) -> int:
     return exit_code
 
 
+def resample_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import resample
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect resample",
+        description="Look for the periodic traces that resizing and turning leave, in the "
+                    "whole picture and in single regions.",
+    )
+    parser.add_argument("images", nargs="+", help="image files (PNG, TIFF or high-quality JPEG)")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_resample.png, "
+                             "written when a trace is found)")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = resample.analyze(src)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if res.judged_fraction == 0:
+            print("   the picture is too flat to judge\n")
+            continue
+        print(f"   checkable : {res.judged_fraction:.0%} of the picture has enough detail to judge")
+        if res.jpeg_grid:
+            print("   jpeg grid : the 8-pixel JPEG grid shows; peaks on it are never counted, so "
+                  "factors such as 1.14x, 1.33x, 1.6x and 4x stay hidden")
+        if res.verdict == "none":
+            print("   no resampling trace. A 2x enlargement and a well-filtered reduction leave "
+                  "none, and a JPEG save afterwards can erase one.\n")
+            continue
+        share = f"{res.carrying_fraction:.0%} of checkable tiles carry it clearly"
+        if res.verdict == "whole" and res.carrying_fraction >= resample.WHOLE:
+            print(f"   ! resampling trace across the picture ({share}): the picture was resized "
+                  "or turned")
+        elif res.verdict == "whole":
+            print(f"   ! faint resampling trace across the picture ({share}, and "
+                  f"{res.leaning_fraction:.0%} of the rest lean the same way, where chance "
+                  "gives 50%): the picture was resized or turned, in the camera or after")
+        elif res.verdict == "region":
+            print(f"   ! resampling trace around {res.box} only ({share}): that area was resized "
+                  "or turned on its own, as an object scaled to fit before pasting is")
+        else:
+            print(f"   resampling peaks in the spectrum, in no connected area ({share}): too "
+                  "faint to place")
+        for peak in res.peaks[:3]:
+            if abs(peak.fy) < 0.75 / resample.TILE:
+                where = f"{peak.fx:.3f} cycles per pixel across"
+            elif abs(peak.fx) < 0.75 / resample.TILE:
+                where = f"{abs(peak.fy):.3f} cycles per pixel down"
+            else:
+                where = f"({peak.fx:.3f}, {peak.fy:+.3f}) cycles per pixel"
+            print(f"     peak at {where}, {peak.ratio:.1f} times its surroundings: {peak.reading}")
+        if res.stretched:
+            width, factor = res.stretched
+            print(f"   ! the peaks form a comb: 8-pixel JPEG blocks now {width:.1f} pixels wide, "
+                  f"so the picture was resized {factor:.2f}x after a JPEG save")
+        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_resample.png")
+        resample.render(res).save(out)
+        print(f"   output : {out} (red = carries the trace, dimmed = cannot judge, "
+              "white frame = area analysed)")
+        print()
+    return exit_code
+
+
 def xmp_main(argv: list[str]) -> int:
     from pathlib import Path
 
@@ -942,6 +1015,8 @@ def main(argv: list[str] | None = None) -> int:
         return cfa_main(argv[1:])
     if argv and argv[0] == "noise":
         return noise_main(argv[1:])
+    if argv and argv[0] == "resample":
+        return resample_main(argv[1:])
     if argv and argv[0] == "xmp":
         return xmp_main(argv[1:])
     if argv and argv[0] == "report":
@@ -957,7 +1032,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
-               "direction), cfa (demosaicing traces), noise (noise level), xmp (editing history), "
+               "direction), cfa (demosaicing traces), noise (noise level), resample (resizing and turning), "
+               "xmp (editing history), "
                "stego (hidden data), compare (two versions of a picture), dupes (duplicates across "
                "folders), copymove, thumbnail, prnu, "
                "report (everything as one HTML page); see 'exif-inspect <subcommand> --help'.",
