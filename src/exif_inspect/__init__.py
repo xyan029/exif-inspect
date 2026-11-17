@@ -1,3 +1,3 @@
 """exif-inspect: EXIF metadata reader with simple forensic hints."""
 
-__version__ = "0.6.0"
+__version__ = "0.7.0"
