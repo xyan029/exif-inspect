@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, relates two versions of a picture, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -84,6 +84,7 @@ exif-inspect --json *.jpg > out.json   # machine-readable output
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 exif-inspect stego photo.png           # bytes after the picture, LSB steganalysis
 exif-inspect compare a.jpg b.jpg       # how two versions of a picture relate
+exif-inspect dupes folder/             # duplicates and near-duplicates, with the likely original
 exif-inspect report photo.jpg          # everything above in one HTML page
 ```
 
@@ -371,6 +372,30 @@ Given two files, the smaller scene is searched for inside the larger one at ever
 ```
 
 Which file is the parent is read from the evidence in order: the one whose frame contains the other; else the one with more pixels; else the one saved at higher JPEG quality; else the one with more of its metadata left; else the one modified earlier. The reason is printed, since each can be forged: a crop can be upscaled past the original, and metadata can be copied across. Placements covering under a quarter of the frame need a correlation of 0.75 instead of 0.6 and a side of at least 40 pixels at analysis size, because a small patch of noise matches anywhere. Two pictures that place with a correlation of 0.97 or better, at the same size and with no changed region, are reported as the same picture.
+
+## Duplicates across folders
+
+```bash
+exif-inspect dupes evidence/ downloads/       # folders are searched recursively
+exif-inspect dupes --distance 4 evidence/     # stricter grouping
+exif-inspect dupes --json evidence/ > groups.json
+```
+
+Case work piles up copies: the same photo saved at three qualities, resized for a message, rotated by a viewer, duplicated byte for byte across folders. `dupes` groups them. Exact duplicates share a SHA-256. Near-duplicates share a perceptual hash: the picture is shrunk to 32x32 grey, its 2-D DCT taken, and the 64 lowest frequencies apart from the mean are thresholded at their median into 64 bits (pHash). Re-saving, resizing, mild colour changes and watermarks move only a few bits; different pictures differ in about half. A second hash from the gradient between neighbouring pixels of a 9x8 thumbnail (dHash) must agree within 16 bits before two files are grouped, which keeps smooth pictures with similar layouts apart. Both hashes are taken at the four rotations and the closest pair counts, so a turned copy is found and its rotation reported.
+
+```
+scanned 11 file(s): 3 group(s) of duplicates, 2 single(s), 0 unreadable
+
+== group 1: 5 files, within 10 hash bits
+   * coffee.jpg
+       JPEG 600x400, q92, 2 EXIF tags, 78 KB; likely original
+     coffee_rot.jpg
+       JPEG 400x600, q85, 0 EXIF tags, 55 KB; distance 0/0, turned 270
+     sub/coffee_thumb.png
+       PNG 300x200, -, 0 EXIF tags, 108 KB; distance 0/0
+```
+
+Within a group the likely original is the file with the most pixels, then the higher JPEG quality, then the most EXIF tags, then the earliest modification time. Crops are not duplicates by these hashes, since the hash describes the whole frame; `compare` handles a pair that may be crop and source. A scan reads every file once and compares hashes pairwise, so a few thousand files take seconds.
 
 ## Cases behind the checks
 
