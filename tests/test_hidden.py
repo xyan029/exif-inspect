@@ -142,7 +142,7 @@ def test_cli_stego(tmp_path, capsys):
     carrier.write_bytes(_bytes("JPEG") + b"PK\x03\x04" + b"\x00" * 300)
     assert main(["stego", "--extract", str(carrier)]) == 0
     out = capsys.readouterr().out
-    assert "ZIP archive" in out and "not applicable to JPEG" in out
+    assert "ZIP archive" in out and "coeffs    :" in out and "too few blocks" in out
     assert (tmp_path / "carrier_trailer.bin").read_bytes().startswith(b"PK\x03\x04")
 
     assert main([str(carrier)]) == 0

@@ -743,8 +743,9 @@ def stego_main(argv: list[str]) -> int:
 
     parser = argparse.ArgumentParser(
         prog="exif-inspect stego",
-        description="Look for data hidden in a file: bytes after the end of the picture, and "
-                    "a payload in the lowest bits of a lossless picture (LSB steganography).",
+        description="Look for data hidden in a file: bytes after the end of the picture, a "
+                    "payload in the lowest bits of a lossless picture (LSB steganography), or "
+                    "one in the DCT coefficients of a JPEG (JSteg-style LSB replacement, F5).",
     )
     parser.add_argument("images", nargs="+", help="image files")
     parser.add_argument("-o", "--output",
@@ -777,7 +778,21 @@ def stego_main(argv: list[str]) -> int:
                 out.write_bytes(src.read_bytes()[t.offset:])
                 print(f"   saved   : {out}")
         if report.format in ("JPEG", "MPO"):
-            print("   lsb     : not applicable to JPEG, which stores no pixel samples\n")
+            from . import stegjpeg
+
+            res = stegjpeg.analyze(src)
+            if res.error:
+                print(f"   coeffs    : {res.error}; the lowest-bit tests need pixel samples, "
+                      "which a JPEG does not store\n")
+                continue
+            print(f"   coeffs    : {res.blocks} luma blocks read, {res.nonzero_ac} non-zero AC "
+                  f"coefficients, {res.usable} usable for JSteg")
+            print(f"   lsb pairs : {res.lsb_embedded:.0%} of the coefficient stream reads as "
+                  f"evened out; the first {res.lsb_prefix:.0%} in one run")
+            if res.f5_ratio is not None:
+                print(f"   calibrated: F5-style change ratio about {res.f5_ratio:.0%}")
+            v = stegjpeg.verdict(res)
+            print(f"   {'!' if v.flag else '-'} {v.message}\n")
             continue
         try:
             res = hidden.analyze_lsb(src)

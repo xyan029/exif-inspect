@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture or in its lowest bits, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds data hidden after the picture, in its lowest bits or in its JPEG coefficients, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -82,7 +82,7 @@ exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
-exif-inspect stego photo.png           # bytes after the picture, LSB steganalysis
+exif-inspect stego photo.png           # bytes after the picture, LSB and JPEG-coefficient steganalysis
 exif-inspect compare a.jpg b.jpg       # how two versions of a picture relate
 exif-inspect dupes folder/             # duplicates and near-duplicates, with the likely original
 exif-inspect report photo.jpg          # everything above in one HTML page
@@ -328,10 +328,11 @@ One page with everything: the picture, the findings (flagged ones first), the me
 
 ```bash
 exif-inspect stego photo.png              # trailer and LSB steganalysis, writes photo_lsb.png
+exif-inspect stego photo.jpg              # trailer and the JSteg / F5 tests on the DCT coefficients
 exif-inspect stego --extract photo.jpg    # also saves the bytes after the picture as photo_trailer.bin
 ```
 
-Two places to hide things in an image file. The simplest is after the picture: every viewer stops reading a JPEG at its EOI marker, a PNG at its IEND chunk, a WebP at the end of its RIFF container and a GIF at its trailer byte, so whatever follows rides along unseen. The main report checks every file for this (`trailing_data`), says how many bytes there are and what they look like (ZIP and other archives, another image, PDF, executables, XML, plain text), and `stego --extract` saves them. A second JPEG that an MPF segment announces, such as an iPhone's gain map, is reported as expected (`trailing_image`).
+Three places to hide things in an image file. The simplest is after the picture: every viewer stops reading a JPEG at its EOI marker, a PNG at its IEND chunk, a WebP at the end of its RIFF container and a GIF at its trailer byte, so whatever follows rides along unseen. The main report checks every file for this (`trailing_data`), says how many bytes there are and what they look like (ZIP and other archives, another image, PDF, executables, XML, plain text), and `stego --extract` saves them. A second JPEG that an MPF segment announces, such as an iPhone's gain map, is reported as expected (`trailing_image`).
 
 The other place is inside the pixels. Replacing the least significant bit of each sample changes the picture by at most one grey level, invisibly, but it changes the statistics of the sample values. For lossless pictures (PNG, BMP, TIFF, GIF; JPEG stores no samples) the subcommand gives three views:
 
@@ -351,6 +352,23 @@ The other place is inside the pixels. Replacing the least significant bit of eac
 The chi-square attack on its own is not trusted for a verdict: on these pictures, several of which were JPEGs once, it reads clean pictures as largely embedded, which is its known weakness on noisy or previously compressed content. It only adds the position of a payload that RS has already found.
 
 Steganography that keeps the statistics (matrix embedding, adaptive schemes such as HUGO or S-UNIWARD) and steganography in JPEG coefficients (JSteg, F5, OutGuess, Steghide) are not covered: RS sees plain LSB replacement, the kind most "hide a message in a picture" tools use.
+
+The third place is the JPEG itself. A JPEG stores no pixels, only quantised DCT coefficients, and that is where JPEG steganography writes. The tool has its own baseline JPEG decoder (`jpegdct`) that reads the coefficients exactly as the file holds them, and runs two tests on the luma AC coefficients:
+
+- **JSteg-style LSB replacement** (JSteg, early OutGuess, most homemade tools) flips the lowest bit of coefficients other than 0 and 1. In a clean picture there are far more 2s than 3s and far more -2s than -1s; embedding evens each pair out. Westfeld's chi-square test runs over blocks of 10 000 coefficients in scan order and reports the share of the stream that reads as evened out and how much of it sits in one run from the start, which is where a payload written from the top of the picture lands. Clean pictures read 0% throughout; from 10% up the file is flagged.
+- **F5-style shrinkage** (F5, and matrix embedding in general) decrements the absolute value of coefficients instead, which raises the count of 0s and lowers 1s and 2s. Fridrich's calibration estimates how many coefficients were changed: decompress, crop four pixels off the left and top so the block grid moves, recompress with the file's own quantisation tables, and compare the low-frequency histograms with what this content would have clean. The estimate is printed; from 15% it is noted and from 30% flagged. It is a lead rather than a verdict: a few heavily processed phone HDR pictures read 20-35% with nothing in them, and F5 at a 30% change rate reads 20-40%.
+
+Progressive and arithmetic-coded JPEGs are not read. Adaptive schemes designed against these statistics (nsF5 at low rates, J-UNIWARD) are not detected.
+
+**Evaluation**, on eight scikit-image sample pictures saved at quality 80 and nine camera JPEGs:
+
+| File | LSB share | F5 estimate |
+|---|---|---|
+| clean | 0% | 0 to 12% (one phone HDR picture 20%) |
+| JSteg, random bits in the first 30% of the usable coefficients | 23 to 44%, all in one run from the start | |
+| JSteg, every usable coefficient | 59 to 93% | |
+| F5-like, 10% of the non-zero coefficients changed | 0% | 0 to 21% |
+| F5-like, 30% changed | 0% | 18 to 43% |
 
 ## Comparing two versions
 

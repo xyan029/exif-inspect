@@ -22,7 +22,7 @@ Every line it prints is a lead for a human examiner, not a verdict. Metadata is 
 | [[Lighting]] | `light` | Were the objects lit by the same light? |
 | [[Thumbnail and Gain Map]] | `thumbnail`, main report | Does the small preview the camera stored still match the picture? |
 | [[Camera Identification]] | `prnu` | Did this camera take this photo, and is any part of it foreign? |
-| [[Hidden Data]] | `stego`, main report | Is something hidden after the picture or in its lowest bits? |
+| [[Hidden Data]] | `stego`, main report | Is something hidden after the picture, in its lowest bits or in its JPEG coefficients? |
 | [[Comparing Two Versions]] | `compare` | How do two files of the same scene relate, and which came first? |
 | [[Duplicates Across Folders]] | `dupes` | Which files in these folders are copies of each other, and which is the original? |
 | [[HTML Report]] | `report` | Everything above on one page to send on. |
