@@ -63,6 +63,7 @@ Each pixel method is a subcommand that writes a picture next to the input (`phot
 ```bash
 exif-inspect ela photo.jpg
 exif-inspect ghost photo.jpg
+exif-inspect dq photo.jpg
 exif-inspect copymove photo.jpg
 exif-inspect noise photo.jpg
 exif-inspect cfa photo.jpg

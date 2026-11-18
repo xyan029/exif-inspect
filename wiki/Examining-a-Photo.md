@@ -38,6 +38,7 @@ Open the HTML page. The maps are easier to compare side by side than one at a ti
 | What you saw | Run next | Why |
 |---|---|---|
 | A rectangle brighter than its surroundings in the ELA map | `ghost photo.jpg` and, if nothing, `ghost --grid photo.jpg` | A ghost names the quality the patch was saved at before, which ELA cannot |
+| A JPEG that an editor's name or a time mismatch says was saved again | `dq photo.jpg` | It reads the first save's table from the coefficients and marks blocks that were compressed only once, which is what a paste or a fill after the first save looks like |
 | Two areas that look the same | `copymove photo.jpg`, then `copymove --keypoints photo.jpg` | Block matching gives a shift backed by hundreds of pairs; keypoints find scaled or rotated copies |
 | A smooth area with no noise in the noise map | `cfa photo.jpg`, `xmp photo.jpg` | A smoothed or filled area lacks the demosaicing trace too; Lightroom records its healing areas in XMP |
 | An object that looks too sharp, too soft or the wrong size for its place | `resample photo.png` | An object scaled before pasting carries an interpolation pattern the rest lacks; needs a lossless file |

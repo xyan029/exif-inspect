@@ -693,6 +693,71 @@ def resample_main(argv: list[str]) -> int:
     return exit_code
 
 
+def dq_main(argv: list[str]) -> int:
+    from pathlib import Path
+
+    from . import dq
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect dq",
+        description="Read a JPEG's coefficients for the pattern an earlier save with another "
+                    "table left (double quantisation), and map the blocks that lack it.",
+    )
+    parser.add_argument("images", nargs="+", help="JPEG files")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_dq.png, written "
+                             "when a region was compressed once)")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = dq.analyze(src)
+        except Exception as exc:
+            print(f"   error  : {exc}\n")
+            exit_code = 1
+            continue
+        if res.verdict == "skipped":
+            print(f"   skipped : {res.note}\n")
+            continue
+        if res.covered < 1:
+            print(f"   analysed the top {res.covered:.0%} of the picture ({dq.MAX_BLOCKS} blocks)")
+        if res.verdict == "none":
+            print("   no trace of an earlier JPEG save with another table. A later save at a "
+                  "lower quality, the same table twice, and cropping or resizing between the "
+                  "saves leave none.\n")
+            continue
+        print(f"   ! saved as a JPEG before, with another table: {len(res.steps)} of the first "
+              f"{len(dq.FREQS)} coefficients show double quantisation")
+        print("     first save's step for each (now) : "
+              + ", ".join(f"{s.index}: {s.first} ({s.current})" for s in res.steps))
+        if res.first_quality:
+            lo, hi = res.first_quality
+            which = f"quality {lo}" if lo == hi else f"a quality from {lo} to {hi}"
+            print(f"     libjpeg's table at {which} explains them")
+        elif len(res.steps) >= dq.MAP_FREQS:
+            print("     no libjpeg quality explains them: another encoder's table")
+        if len(res.steps) < dq.MAP_FREQS:
+            print("   too few coefficients show the pattern to judge single blocks\n")
+            continue
+        print(f"   checkable : {res.judged_fraction:.0%} of blocks have detail and no clipped pixel")
+        if res.box:
+            print(f"   ! region around {res.box} was compressed only once "
+                  f"({res.single_fraction:.1%} of checkable blocks read that way): pasted, "
+                  "painted or filled in after the first save")
+            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_dq.png")
+            dq.render(res).save(out)
+            print(f"   output : {out} (red = compressed once, dimmed = cannot judge)")
+        else:
+            print("   no region stands apart: the checkable blocks were all compressed twice")
+        print()
+    return exit_code
+
+
 def xmp_main(argv: list[str]) -> int:
     from pathlib import Path
 
@@ -1017,6 +1082,8 @@ def main(argv: list[str] | None = None) -> int:
         return noise_main(argv[1:])
     if argv and argv[0] == "resample":
         return resample_main(argv[1:])
+    if argv and argv[0] == "dq":
+        return dq_main(argv[1:])
     if argv and argv[0] == "xmp":
         return xmp_main(argv[1:])
     if argv and argv[0] == "report":
@@ -1032,7 +1099,8 @@ def main(argv: list[str] | None = None) -> int:
         prog="exif-inspect",
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
-               "direction), cfa (demosaicing traces), noise (noise level), resample (resizing and turning), "
+               "direction), cfa (demosaicing traces), noise (noise level), resample (resizing and turning), dq (double JPEG "
+               "quantisation), "
                "xmp (editing history), "
                "stego (hidden data), compare (two versions of a picture), dupes (duplicates across "
                "folders), copymove, thumbnail, prnu, "

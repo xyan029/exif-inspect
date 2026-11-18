@@ -1,6 +1,6 @@
 # ELA and JPEG Ghosts
 
-Both methods ask whether every part of a JPEG went through the same compression history. ELA shows it as a picture to read by eye; ghosts turn it into numbers, naming the earlier quality.
+Three methods ask whether every part of a JPEG went through the same compression history. ELA shows it as a picture to read by eye; ghosts turn it into numbers, naming the earlier quality; double quantisation reads the earlier table from the file's own coefficients and marks the blocks that never saw it.
 
 ## Error level analysis
 
@@ -38,3 +38,27 @@ Re-saving a JPEG at the quality it was last saved at changes it very little, and
 **Grid alignment.** A ghost appears only when the 8x8 grid of the re-save lines up with the grid of the earlier compression. A pasted patch lands on the grid in one case out of 64, so `--grid` repeats the search at the other 63 offsets. It costs about 12 times the plain run, and it finds less: the save on the host's grid blurs the earlier quantisation, so only strong off-grid ghosts stand out (3 of 10 in the test set). Ghosts also need the earlier quality to be lower than the current one; a patch from a better JPEG leaves none, which is ELA's case.
 
 **Numbers.** On 20 scikit-image pictures: 80 untouched files gave no report apart from one real ghost (see [[Case Studies]], the coins picture); 25 of 28 files saved at a lower quality first reported it within 1; 93 of 120 pasted patches were located at the right place with the quality within 3, none in a wrong place.
+
+## Double quantisation
+
+```bash
+exif-inspect dq photo.jpg               # photo_dq.png when a region was compressed once
+```
+
+A JPEG save divides every DCT coefficient by a step and rounds. A second save with other steps rounds the rounded values again, and the histogram of each coefficient shows periodic peaks and gaps that depend on the first step (Lukas and Fridrich, 2003). A block pasted or painted in after the first save was rounded once and lacks the pattern (Lin et al., 2009; Bianchi and Piva, 2012).
+
+- **The first table.** The picture is decoded, cropped by four pixels and transformed again, which estimates the coefficients before any rounding. Rounding those twice, with a candidate first step and then the file's own, predicts a double save; rounding them once predicts a single one. The step that explains the file's histogram best is kept for each of the first 15 AC coefficients, and three coefficients with a clear gain make a file that was saved before.
+- **Its quality.** With six or more coefficients the libjpeg quality whose table explains the histograms is named, as a range when the picture has too little texture to tell neighbouring steps apart. Another encoder's table is reported as such.
+- **By block.** Each 8x8 block gets the log likelihood ratio of the two predictions, averaged with the blocks around it. Sixteen connected blocks that read as compressed once are a region, red in the output. Flat blocks, blocks with a clipped channel and blocks over the picture's edge are not judged.
+
+```
+   ! saved as a JPEG before, with another table: 15 of the first 15 coefficients show double quantisation
+     libjpeg's table at quality 70 explains them
+   ! region around (56, 88, 208, 208) was compressed only once (5.9% of checkable blocks read that way): pasted, painted or filled in after the first save
+```
+
+**When to use which.** `dq` answers the case where the picture has a JPEG past and the edit has none: a camera JPEG opened, changed and saved again. `ghost` answers the opposite one, a patch with a low-quality past in a picture without it. On 11 forgeries of the first kind `dq` found 10 or 11 and `ghost` 0 to 4, depending on the qualities; on 11 of the second kind `ghost` found 8 and `dq` none.
+
+**What it needs.** A second save finer than the first. The same table twice, a coarser second save, and cropping or resizing between the saves leave no pattern. Progressive JPEGs and other formats are skipped.
+
+**Numbers.** On 12 scikit-image pictures: none of 60 files saved once read as saved before; all 72 saved twice with a finer second save were read as such with the first quality in the range named, and none had a region flagged; a 128x96 patch pasted between the saves was found in 10 or 11 of 11 for six pairs of qualities from 50 then 75 to 90 then 95, and in 3 of 11 for 80 then 85. On 62 real camera JPEGs saved again at 98, 95 and 90, a pasted 96x96 patch was found in 56, 40 and 18, and no region was flagged when nothing was pasted.

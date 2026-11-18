@@ -1,6 +1,6 @@
 # exif-inspect
 
-A command-line tool for first-pass image forensics. It reads what a file says about itself (EXIF, XMP, C2PA, JPEG tables, thumbnails, gain maps) and what the pixels say (error levels, JPEG ghosts, copy-move clones, demosaicing traces, noise levels, resampling traces, lighting direction, sensor noise), and it points out what deserves a closer look.
+A command-line tool for first-pass image forensics. It reads what a file says about itself (EXIF, XMP, C2PA, JPEG tables, thumbnails, gain maps) and what the pixels say (error levels, JPEG ghosts, double quantisation, copy-move clones, demosaicing traces, noise levels, resampling traces, lighting direction, sensor noise), and it points out what deserves a closer look.
 
 Every line it prints is a lead for a human examiner, not a verdict. Metadata is easy to edit or strip, and each pixel method has conditions under which it sees nothing. The wiki says what each method can and cannot show, so that you know how much weight a result carries.
 
@@ -16,7 +16,7 @@ Every line it prints is a lead for a human examiner, not a verdict. Metadata is 
 | Page | Commands | Question it answers |
 |---|---|---|
 | [[Metadata and XMP]] | `exif-inspect`, `exif-inspect xmp` | What does the file say about its own history? |
-| [[ELA and JPEG Ghosts]] | `ela`, `ghost` | Was a region saved through a different JPEG history than the rest? |
+| [[ELA and JPEG Ghosts]] | `ela`, `ghost`, `dq` | Was a region saved through a different JPEG history than the rest? |
 | [[Copy-Move]] | `copymove` | Was part of the picture cloned from elsewhere in the same picture? |
 | [[Noise and Demosaicing]] | `noise`, `cfa` | Did every region go through the same sensor and pipeline? |
 | [[Resizing and Turning]] | `resample` | Was the picture, or one region of it, enlarged, reduced or turned? |

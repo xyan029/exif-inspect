@@ -38,6 +38,8 @@ def test_build_runs_every_tool(tmp_path):
     assert "Error level analysis" in page and "JPEG ghosts" in page and "XMP editing history" in page
     assert page.count("data:image/jpeg;base64,") >= 2             # the picture and the ELA pair
     assert "Software tag names an image editor" in page
+    twice = next(s for s in built.sections if s.key == "dq")
+    assert "saved as a JPEG before" in twice.text                  # quality 60, then 90
     ghost = next(s for s in built.sections if s.key == "ghost")
     assert "ghost at quality" in ghost.text or "whole image carries a ghost" in ghost.text
 
@@ -48,7 +50,7 @@ def test_skip_and_output(tmp_path, capsys):
     out = tmp_path / "r.html"
     assert main(["report", "--skip", "light,copymove,ghost", "-o", str(out), str(path)]) == 0
     text = capsys.readouterr().out
-    assert "report :" in text and "5 tool section(s)" in text
+    assert "report :" in text and "6 tool section(s)" in text
     page = out.read_text(encoding="utf-8")
     assert "Lighting direction" not in page and "JPEG ghosts" not in page
     assert "Noise level" in page and "Resampling traces" in page
