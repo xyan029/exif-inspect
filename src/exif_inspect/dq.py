@@ -224,10 +224,16 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
     try:
         jd = jpegdct.read(data, max_blocks=max_blocks)
     except jpegdct.Unsupported as exc:
-        return _skipped(f"{exc}; only baseline JPEGs can be read")
+        return _skipped(f"{exc}, which the coefficient reader does not read")
     except ValueError as exc:                    # jpegdct.Corrupt, or a file without a scan
         return _skipped(f"the JPEG structure is damaged: {exc}")
     luma = jd.luma
+    if luma.bits_missing or luma.unsent:
+        # A progressive file that stops before its last passes holds rounded coefficients; their
+        # histograms would show the gaps of the rounding and read as a second compression.
+        broke = [n.split(";")[0] for n in jd.notes if "breaks the format" in n]
+        return _skipped("; ".join(["the progressive passes stop early, so the coefficients are only "
+                                   "known roughly: " + luma.shortfall] + broke))
     if luma.h < max(c.h for c in jd.components) or luma.v < max(c.v for c in jd.components):
         return _skipped("the first component is stored at reduced size, which no camera or editor "
                         "does to luma")

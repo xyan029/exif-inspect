@@ -233,7 +233,7 @@ A picture with a 128x96 patch of another pasted in between a save at quality 70 
    output : splice_dq.png (red = compressed once, dimmed = cannot judge)
 ```
 
-The pattern is strong when the second save is the finer one, weak when it is coarser, and absent when the two saves used the same table or when the picture was cropped off the grid or resized in between. Progressive JPEGs are skipped, since the decoder reads baseline files only, and so is anything that is not a JPEG.
+The pattern is strong when the second save is the finer one, weak when it is coarser, and absent when the two saves used the same table or when the picture was cropped off the grid or resized in between. Progressive JPEGs are read like baseline ones, since both hold the same coefficients. A progressive file whose last passes are missing is skipped, because its coefficients are only known to a few bits, and so is anything that is not a JPEG.
 
 **Evaluation**, on 12 scikit-image sample pictures: the four with no JPEG in their past at full size (cameraman, moon, brick, gravel) and eight halved by box averaging, which takes an old block grid apart.
 
@@ -559,12 +559,12 @@ The chi-square attack on its own is not trusted for a verdict: on these pictures
 
 Steganography that keeps the statistics (matrix embedding, adaptive schemes such as HUGO or S-UNIWARD) and steganography in JPEG coefficients (JSteg, F5, OutGuess, Steghide) are not covered: RS sees plain LSB replacement, the kind most "hide a message in a picture" tools use.
 
-The third place is the JPEG itself. A JPEG stores no pixels, only quantised DCT coefficients, and that is where JPEG steganography writes. The tool has its own baseline JPEG decoder (`jpegdct`) that reads the coefficients exactly as the file holds them, and runs two tests on the luma AC coefficients:
+The third place is the JPEG itself. A JPEG stores no pixels, only quantised DCT coefficients, and that is where JPEG steganography writes. The tool has its own JPEG decoder (`jpegdct`), for baseline and progressive files, that reads the coefficients exactly as the file holds them, and runs two tests on the luma AC coefficients:
 
 - **JSteg-style LSB replacement** (JSteg, early OutGuess, most homemade tools) flips the lowest bit of coefficients other than 0 and 1. In a clean picture there are far more 2s than 3s and far more -2s than -1s; embedding evens each pair out. Westfeld's chi-square test runs over blocks of 10 000 coefficients in scan order and reports the share of the stream that reads as evened out and how much of it sits in one run from the start, which is where a payload written from the top of the picture lands. Clean pictures read 0% throughout; from 10% up the file is flagged.
 - **F5-style shrinkage** (F5, and matrix embedding in general) decrements the absolute value of coefficients instead, which raises the count of 0s and lowers 1s and 2s. Fridrich's calibration estimates how many coefficients were changed: decompress, crop four pixels off the left and top so the block grid moves, recompress with the file's own quantisation tables, and compare the low-frequency histograms with what this content would have clean. The estimate is printed; from 15% it is noted and from 30% flagged. It is a lead rather than a verdict: a few heavily processed phone HDR pictures read 20-35% with nothing in them, and F5 at a 30% change rate reads 20-40%.
 
-Progressive and arithmetic-coded JPEGs are not read. Adaptive schemes designed against these statistics (nsF5 at low rates, J-UNIWARD) are not detected.
+Arithmetic-coded JPEGs are not read, and a progressive file that stops before its last passes is skipped, since the lowest bits of its coefficients are not in the file. Adaptive schemes designed against these statistics (nsF5 at low rates, J-UNIWARD) are not detected.
 
 **Evaluation**, on eight scikit-image sample pictures saved at quality 80 and nine camera JPEGs:
 
@@ -829,7 +829,7 @@ The kinds were `IndexError`, `KeyError`, `StopIteration`, `struct.error`, `ZeroD
 
 Sound files are untouched by all this: on 117 JPEGs (89 from cameras) the coefficients, tables and segments are identical before and after. The one exception is a camera sample that is itself damaged: the old reader disagreed with libjpeg in 2 of its 171 rows of blocks, the new one in none. `dq` gives the same output on 152 real-file runs, and reading takes the same time.
 
-**Left open.** Progressive and arithmetic-coded files are still not read. Converting a JPEG to progressive is lossless and takes one command, and it keeps `dq` and `stego` off the file; the output says so by name, and reading progressive scans is the next thing this reader should learn. `FF FF 00` inside the scan data, which the standard forbids, is read as one data byte as libjpeg's reference path does, while libjpeg-turbo can leave stray values in the one MCU where it occurs. The fuzzer mutates eight seeds without coverage feedback, so its silence means these mutations find nothing more, which is a weaker statement than nothing being left.
+**Left open.** At this point progressive files were refused by name, and converting a JPEG to progressive is lossless and takes one command; [Progressive files](#progressive-files) below closes that. Arithmetic-coded files are still refused. `FF FF 00` inside the scan data, which the standard forbids, is read as one data byte as libjpeg's reference path does, while libjpeg-turbo can leave stray values in the one MCU where it occurs. The fuzzer mutates eight seeds without coverage feedback, so its silence means these mutations find nothing more, which is a weaker statement than nothing being left.
 
 ### Around the picture
 
@@ -927,6 +927,78 @@ On the JPEG walks the corpus grew from 8 seeds to 64 inputs and the branches rea
 On the 102 real sample files the default command's JSON is the same before and after, apart from the three new fields, in all but two. A Polaroid file has a NUL byte inside its model name, which used to go to the terminal as it was and now prints as `\x00`. A test file with GPS rationals over zero used to be reported as `GPS coordinates embedded: nan, nan` and now has no coordinates.
 
 **Left open.** Bytes can also be hidden inside a container: in a private PNG chunk in front of IEND, or in a JPEG comment segment. The trailer check looks behind the picture and reports neither; for WebP an unknown chunk is now reported. Raw bytes inside an enlarged WebP size field make Pillow refuse the file while OpenCV's decoder shows it, so the tools answer with an error there. Pillow stops at about 179 megapixels, under the 200 megapixels some phone sensors deliver, and a picture upscaled past that is refused by every tool. The link check and the write are two steps, which is enough against a link that came with the evidence and too little against someone changing the folder while the tool runs. HEIC files were not part of this round.
+
+### Progressive files
+
+A progressive JPEG holds the same coefficients as a baseline one, sent in passes: first the coarse bits of every block, then bands of higher frequencies, then one more bit at a time. `jpegtran -progressive` turns one form into the other without changing a coefficient, and until now that one command took `dq` and `stego` off a file:
+
+```
+== spliced_progressive.jpg
+   skipped : progressive JPEG; only baseline JPEGs can be read
+```
+
+The reader now follows the passes: spectral selection, successive approximation, end-of-band runs and the correction bits of a refinement pass, statement by statement after libjpeg's decoder. The same file:
+
+```
+== spliced_progressive.jpg
+   ! saved as a JPEG before, with another table: 15 of the first 15 coefficients show double quantisation
+     first save's step for each (now) : 1: 7 (2), 2: 7 (2), 3: 8 (3), 4: 7 (2), 5: 6 (2), 6: 10 (3), 7: 8 (3), 8: 8 (3), 9: 8 (3), 10: 11 (4), 11: 10 (3), 12: 10 (3), 13: 11 (4), 14: 14 (5), 15: 23 (8)
+     libjpeg's table at quality 70 explains them
+   checkable : 100% of blocks have detail and no clipped pixel
+   ! region around (120, 88, 264, 200) was compressed only once (12.4% of checkable blocks read that way): pasted, painted or filled in after the first save
+   output : spliced_progressive_dq.png (red = compressed once, dimmed = cannot judge)
+```
+
+Apart from the file's name that is line for line what the baseline form prints, and a JSteg payload reads the same in both forms: 21% of the coefficient stream evened out, the first 10% in one run.
+
+**Sound files.** Each line compares coefficients, and where it says so the pixels libjpeg decodes:
+
+| Files | Result |
+|---|---|
+| 476 pictures saved by Pillow as baseline and as progressive (sizes from 1 pixel, qualities 5 to 100, three subsamplings, grey and CMYK, with and without restart intervals and optimised tables) | the same coefficients in every pair |
+| 1 512 files written by the tests' own progressive encoder in seven scan scripts: libjpeg's default, spectral selection alone, one band per component, one scan per coefficient, one and three refinement passes, AC bands in front of the DC scan | libjpeg decodes each to the pixels of the baseline original, and the reader returns the coefficients that went in |
+| 88 real JPEGs, most from cameras, rewritten as progressive | libjpeg shows the same pixels for all 88, every block that holds picture has the same coefficients, and `dq` and `stego` print the same result for both forms of all 88 |
+
+Ten of the 88 differ in blocks outside the picture. A baseline file codes whole MCUs, so a picture whose width is no multiple of the MCU carries padding blocks, and some cameras leave AC values in them. The AC passes of a progressive file cover the picture's own blocks only, so the conversion drops those values. No analysis here reads them.
+
+**Files that stop early.** A progressive file can end before its last pass and still open everywhere: the picture is then known to fewer bits. The reader keeps, for every coefficient, the lowest bit that reached every block, and says what is missing. `dq` and `stego` work on the lowest bits, so both stop there with the reason:
+
+```
+== spliced_first_passes.jpg
+   skipped : the progressive passes stop early, so the coefficients are only known roughly: somewhere in the picture coefficients lack their lowest 1 bit
+```
+
+libjpeg keeps a coarser account, by scan header: a scan that announces the last bit counts, even with no data behind it. A file whose last pass was cut out and replaced by ten bytes of scan header therefore opens without a warning and looks complete to that account, with every AC coefficient even. The reader counts a pass for the blocks it filled, and the ten-byte version gets the same line as above.
+
+**Damaged files, read as libjpeg reads them.** 12 000 progressive and multi-scan files with one or two changes each (scan headers, table ids, bit positions, bands, bytes inside the scan data, markers moved, cut or doubled), every one through the reader and through Pillow:
+
+| | Files |
+|---|---|
+| Pillow shows a picture | 7 581 |
+| ... and the reader reads the same picture | 7 536 |
+| ... and the reader reads another picture | 0 |
+| ... refused by name as arithmetic-coded | 2 |
+| ... not compared (the luma stored at reduced size, or passes missing in a way the comparison cannot complete) | 43 |
+| Pillow shows nothing and the reader refuses too | 3 171 |
+| Pillow shows nothing; the reader keeps the scans in front of the break and says so | 1 080 |
+| Pillow shows nothing; the reader reads the file | 59 |
+
+For 895 of the 7 536 the passes were incomplete. libjpeg smooths such blocks from their neighbours, so its pixels there are its own estimate; both sides were given the file with empty closing scans appended, which turns the smoothing off, and then agree.
+
+The 1 080 are files whose first scans are sound and whose later part breaks the format: an unknown marker, a second frame header, a table with an impossible id. libjpeg gives up on the whole file. A viewer that draws pass by pass has shown the first scans by then, and the reader takes that reading and names the break:
+
+```
+== spliced_broken.jpg
+   skipped : the progressive passes stop early, so the coefficients are only known roughly: somewhere in the picture coefficients lack their lowest 1 bit; after 9 scans the file breaks the format (marker FF05, which no JPEG has)
+```
+
+The same break in front of the first scan is a refusal, as before. The 59 are of three kinds: stray bytes between segments that libjpeg skips and the viewers' own format checks stop at, a stray marker in the scan data that opens a segment running past the end of the file (the reader reports a truncated file, libjpeg an invalid table), and a few that ImageMagick shows.
+
+Along the way the reader took over more of libjpeg's limits, for baseline files too: a side of more than 65 500 pixels, sampling factors that do not divide the largest one, a frame header or restart interval of the wrong length, a second SOI, and markers no JPEG defines are refused, and a scan's list of components is accepted or refused by libjpeg's rule, checked against it for every list of up to three ids. A progressive file gets no standard Huffman tables when its own are missing, which is libjpeg's rule as well.
+
+**Nothing else moved.** 16 000 mutated baseline files give the same count before and after where a viewer shows a picture (7 809 of 7 844 read alike; of the other 35, 5 are arithmetic-coded and refused by name, 28 store the luma at reduced size and 2 claim 60 megapixels, which the comparison leaves out), and the files only the reader reads fell from 847 to 500. The six fuzz targets that touch the reader, with progressive seeds added, end without a failure on 92 000 inputs. `dq` and `stego` print the same lines for the 89 real sample files as before, and reading a baseline file takes the same time. A progressive file takes about 1.8 times as long as its baseline form, since every block is visited once per pass; a file whose scans would go over a large picture more than 64 times is refused.
+
+**Left open.** Arithmetic-coded files are refused by name, and libjpeg-turbo shows them. Dropping the last pass costs a picture one bit per coefficient and takes `dq` and `stego` off it; the skip says why. An interrupted download leaves such a file and no encoder does, so the line is worth a second look by itself. Reading double quantisation from coefficients that lack their lowest bit would need its own model. `jpegdct.write` still writes baseline files; the progressive encoder lives in the tests.
 
 ## Tests
 
