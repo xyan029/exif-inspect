@@ -42,6 +42,10 @@ Photos' Clean Up removed a plastic bag and a book edge from a 24-megapixel iPhon
 
 `coins.png` from the scikit-image sample collection, used as an untouched control for the ghost evaluation, reported a ghost at quality 85. The PNG itself shows a dip at 85 with an error of 0.11 against 4.1 at quality 90: it had been a JPEG saved at quality 85 before it became a PNG. A control file is only a control if its own history is known.
 
+## A texture that had been a JPEG at quality 90
+
+`grass.png` from the same collection was meant as a host with no JPEG past for the double quantisation tests. Saved once at quality 98 it read as saved twice, on three of the highest coefficients only, with the steps of libjpeg's quality 90. The pixels of the PNG settle it without any model: its DCT coefficient at zigzag position 15 lies on average 0.05 of a step from a multiple of 8, where a picture with no JPEG past gives 0.25, and only on the picture's own block grid. The low coefficients show nothing because their steps of 2 and 3 are too close to the rounding of the pixels. `coins.png` reads as quality 85 with this method too, on all 15 coefficients, which agrees with its ghost.
+
 ## A photo re-saved by Windows Photo Gallery
 
 A Canon IXUS 40 photo re-saved by Windows Photo Gallery near quality 96 was the one file in 89 real camera JPEGs that kept a strong demosaicing trace, and it also produced a five-block false region at the edge of a blown-out white band. A strong trace in a re-saved file says the re-save was gentle; the false region says what the CFA map's edge looks like.

@@ -4,6 +4,7 @@
 - **Bayer filter, CFA**: the colour filter array over a sensor. Each pixel records one colour; demosaicing fills in the other two from neighbours.
 - **C2PA**: Content Credentials, a signed manifest of who made a file and what was done to it. exif-inspect reports its presence and generator but does not verify the signature.
 - **Demosaicing**: interpolation of the two missing colours per pixel. It leaves a periodic pattern that `cfa` measures.
+- **Double quantisation**: rounding a DCT coefficient with one step and then another, as two JPEG saves do. It leaves periodic peaks and gaps in the coefficient's histogram, from which `dq` reads the first step.
 - **ELA, error level analysis**: re-save the picture once and look at how much each pixel changes; areas with a different compression history change differently.
 - **Gain map**: a half-size grayscale image stored with HDR photos (iPhone 12 and later, Ultra HDR) that tells HDR displays where to brighten.
 - **Ghost, JPEG ghost**: a dip in the re-save error at a quality the picture passed through before.

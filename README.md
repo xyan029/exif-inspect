@@ -2,7 +2,7 @@
 
 [![tests](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml/badge.svg)](https://github.com/xyan029/exif-inspect/actions/workflows/tests.yml)
 
-A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds the traces of resizing and turning in the whole picture or in one region, finds data hidden after the picture, in its lowest bits or in its JPEG coefficients, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
+A small command-line tool for first-pass image forensics. The [wiki](https://github.com/xyan029/exif-inspect/wiki) explains how to examine a photo with it, method by method, and what each result can and cannot show; the pages live in [`wiki/`](wiki/) and are published from there. It prints the EXIF metadata of images, reads the XMP editing history and Camera Raw settings, detects C2PA Content Credentials and AI-generation labels, points out details worth a closer look, and draws error level analysis (ELA) heatmaps for JPEGs, finds the earlier JPEG qualities an image or a pasted region passed through (JPEG ghosts), reads an earlier save's quantisation table from the coefficients and maps the blocks that were compressed only once, checks that objects agree on where the light came from, maps where the traces of demosaicing are missing, maps the sensor noise and the regions whose noise does not match, finds the traces of resizing and turning in the whole picture or in one region, finds data hidden after the picture, in its lowest bits or in its JPEG coefficients, relates two versions of a picture, groups duplicates across folders, finds copy-move clones, compares the EXIF thumbnail with the main image, and matches photos to the camera that took them by sensor noise.
 
 ## What it reports
 
@@ -81,6 +81,7 @@ pip install -e ".[heic]"
 exif-inspect photo.jpg                 # key tags and findings
 exif-inspect --all photo.jpg           # every tag
 exif-inspect --json *.jpg > out.json   # machine-readable output
+exif-inspect dq photo.jpg              # an earlier JPEG save's table, and blocks compressed only once
 exif-inspect resample photo.png        # traces of resizing and turning, by region
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 exif-inspect stego photo.png           # bytes after the picture, LSB and JPEG-coefficient steganalysis
@@ -203,6 +204,71 @@ The current quality is read from the quantization tables when they are libjpeg's
 | 5 untouched files with `--grid` | nothing reported |
 
 No test reported a region in a wrong place. The one report among the untouched files was the `coins` picture at quality 95, and its ghost is real: the PNG in the collection shows a dip at quality 85 on its own (error 0.11 against 4.1 at quality 90), so it was a JPEG saved at quality 85 before it became a PNG. Repeated saves at the same quality, saves through other encoders' tables (Apple ImageIO, WeChat), resizing and cropping all move or blur the dips, so a ghost names a quality only approximately and a missing ghost says little.
+
+## Double quantisation
+
+```bash
+exif-inspect dq photo.jpg             # an earlier save's table, and the blocks that never saw it
+```
+
+A JPEG save divides every DCT coefficient by a step from its quantisation table and rounds. A second save with other steps rounds the rounded values again, and the two grids beat against each other: some values of the final coefficient collect several of the first save's values and others none, so its histogram shows periodic peaks and gaps (Lukas and Fridrich, Estimation of primary quantization matrix in double compressed JPEG images, 2003). The pattern depends on the first step, which makes the first save's table readable from the file. A block pasted or painted in after the first save was rounded only once, and its coefficients fall where a twice-rounded block's rarely do (Lin, He, Tang and Tang, [Fast, automatic and fine-grained tampered JPEG image detection via DCT coefficient analysis](https://doi.org/10.1016/j.patcog.2009.03.019), 2009; Bianchi and Piva, [Image forgery localization via block-grained analysis of JPEG artifacts](https://doi.org/10.1109/TIFS.2012.2187516), 2012).
+
+The tool reads the quantised coefficients straight from the file, with the decoder `stego` uses, and works on the first 15 AC coefficients of the luma channel.
+
+- **The first table.** To judge a candidate first step the tool needs the coefficients as they were before any rounding. Decoding the picture, cropping four pixels off the top and left and taking the DCT again breaks the block grid and gives a good estimate of them. Rounding those with a candidate step and then with the file's own predicts the histogram a double save would give; rounding them once predicts a single save. Every step from 1 to 48 is tried, in a mixture that lets up to half of the blocks be rounded once. A coefficient counts when its best step gains 0.03 nats per coefficient over a single save and 1.5 times what the model leaves unexplained, and three coefficients make a file that was saved before.
+- **Its quality.** With six or more coefficients, the libjpeg quality whose table explains the histograms as well as free steps do (97% of the gain) is named. In a picture with little texture neighbouring steps can give the same histogram, and the tool then names a range of qualities.
+- **By block.** Each 8x8 block gets the log likelihood ratio of its coefficients under the two predictions, averaged over the blocks within two of it. A ratio of 4 or more reads as compressed once; 16 connected blocks are reported as a region and tinted red. Blocks with fewer than two non-zero coefficients, with a channel at black or white (clipping between the saves follows no rounding model) or hanging over the edge of the picture are not judged.
+
+A picture with a 128x96 patch of another pasted in between a save at quality 70 and one at 90:
+
+```
+== splice.jpg
+   ! saved as a JPEG before, with another table: 15 of the first 15 coefficients show double quantisation
+     first save's step for each (now) : 1: 7 (2), 2: 7 (2), 3: 8 (3), 4: 7 (2), 5: 6 (2), 6: 10 (3), 7: 8 (3), 8: 8 (3), 9: 8 (3), 10: 11 (4), 11: 10 (3), 12: 10 (3), 13: 11 (4), 14: 14 (5), 15: 25 (8)
+     libjpeg's table at quality 70 explains them
+   checkable : 98% of blocks have detail and no clipped pixel
+   ! region around (56, 88, 208, 208) was compressed only once (5.9% of checkable blocks read that way): pasted, painted or filled in after the first save
+   output : splice_dq.png (red = compressed once, dimmed = cannot judge)
+```
+
+The pattern is strong when the second save is the finer one, weak when it is coarser, and absent when the two saves used the same table or when the picture was cropped off the grid or resized in between. Progressive JPEGs are skipped, since the decoder reads baseline files only, and so is anything that is not a JPEG.
+
+**Evaluation**, on 12 scikit-image sample pictures: the four with no JPEG in their past at full size (cameraman, moon, brick, gravel) and eight halved by box averaging, which takes an old block grid apart.
+
+| Test | Result |
+|---|---|
+| saved once at 98, 95, 90, 80 or 70 (60 files) | none read as saved before |
+| saved twice with the second save finer: 50 then 75, 60 then 80, 70 then 90, 75 then 85, 85 then 95, 90 then 95 (72 files) | all 72 read as saved twice, with the first quality inside the range named (one quality for 70, 85 and 90; up to 3 wide for 50); no region flagged |
+| 80 then 85 (12 files) | 8 read as saved twice, first quality right; no region flagged |
+| the same table twice, or the second save coarser: 85 then 85, 85 then 75, 90 then 75 (36 files) | 2 of the 85 then 75 files read as saved twice; nothing else |
+
+A patch of another sample pasted in at a random place off the grid between the two saves; found means a region was reported with at least half of its blocks on the patch:
+
+| Saves | 128x96 patch, of 11 | 64x64 patch, of 12 | `ghost` on the 128x96 files |
+|---|---|---|---|
+| 50 then 75 | 11 | not run | 0 |
+| 60 then 80 | 11 | 12 | 4 |
+| 70 then 90 | 11 | 11 | 0 |
+| 75 then 85 | 10 | 10 | 3 |
+| 80 then 85 | 3 | not run | 1 |
+| 85 then 95 | 11 | 11 | 0 |
+| 90 then 95 | 11 | 10 | 0 |
+| 85 then 85, 85 then 75, 90 then 75 | 0 | not run | 0 |
+
+`dq` reported no region off its patch in any of these files. The region covers a median of 70% to 92% of the patch for the pairs found throughout, and less where the patch is smooth or clipped. `ghost` is on the table because the two tools answer opposite cases. Here the picture has the JPEG past and the patch has none, which a ghost search has little to hold on to. With the roles swapped, a 128x96 patch from a quality 60 JPEG pasted on the grid into a picture with no JPEG past and saved once at 90 or 95, `ghost` finds 8 and 7 of 11 and `dq` reports nothing in any of the 22 files, since the picture as a whole was compressed once.
+
+Real files: of the 89 JPEGs in the exif-samples collection, 23 have fewer than 500 blocks and are skipped. Of the other 66, 65 show no earlier table, as files straight from a camera should. The one that does carries `PMB Service Uploader` in its `Software` tag, Sony's upload tool, so it was indeed saved again. Opening the 62 clean ones of at least 256 pixels and saving them again, with and without a 96x96 patch of another photo pasted in:
+
+| Second save | read as saved twice | region flagged, nothing pasted | patch found |
+|---|---|---|---|
+| quality 98 | 59 of 62 | 0 | 56 |
+| quality 95 | 55 | 0 | 40 |
+| quality 90 | 33 | 0 | 18 |
+| quality 85 | 16 with a patch | not run | 12 |
+
+No region was reported off its patch here either. Cameras save at high quality with tables of their own, so a second save has to be finer still to leave a clear pattern, and the rate falls as the second quality does. A 16-megapixel file takes about twelve seconds, nearly all of it spent reading the coefficients; larger files are read from the top down to 200 000 blocks.
+
+Six of the 16 sample pictures carry an earlier table themselves when saved once at 98: coins (quality 85, the value `ghost` reads from it too), the scanned page (an encoder that is not libjpeg), retina, the Hubble field, rocket and grass. Grass shows it on three high coefficients only, with the steps of quality 90, and the pixels of the PNG confirm it: the coefficient at zigzag position 15 lies on average 0.05 of a step from a multiple of 8, where a picture with no JPEG past would give 0.25, and it does so only on the picture's own grid. Synthetic drawings with flat colours and hard edges are a poor fit for the model: the colour wheel sample, saved twice, is read as such for 3 of the 6 pairs with a finer second save, and never has a region flagged.
 
 ## Lighting direction
 
@@ -396,7 +462,7 @@ exif-inspect report --skip light,copymove photo.jpg # leave tools out
 exif-inspect report --grid -o out.html photo.jpg    # slower ghost search, chosen output path
 ```
 
-One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `cfa`, `noise`, `resample`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
+One page with everything: the picture, the findings (flagged ones first), the metadata report, and a section for each tool in turn, `ela`, `ghost`, `dq`, `cfa`, `noise`, `resample`, `light`, `copymove`, `thumbnail` (when the file has one) and `xmp`, each with the map it drew and the text it printed, and the time it took. Pictures are embedded in the page, downscaled to 1400 pixels, so the file stands alone and can be sent on; a report on a 12-megapixel photo is a few hundred kilobytes. A tool that fails on a file gets a red heading and its error, and the rest of the page is still written. `prnu` is not included, since it needs a camera fingerprint.
 
 ## Hidden data
 

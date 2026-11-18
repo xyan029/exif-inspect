@@ -11,6 +11,7 @@ What each method needs, what destroys its signal, and what makes it say somethin
 | HDR gain map | iPhone 12 or later, Ultra HDR phones | Any editor that drops it | HDR turned off at capture |
 | ELA | One JPEG history for the whole picture | Many re-saves, very high quality, PNG conversion, screenshots, platform recompression | Hard-edged, saturated objects (a traffic light lit up as much as a pasted building) |
 | JPEG ghosts | An earlier quality lower than the current one, grid-aligned (or `--grid`) | Re-saves through non-libjpeg tables, resizing, cropping off the grid, strong compression | A quality that is an echo of a lower dip (80 after 60; handled) |
+| Double quantisation | A baseline JPEG saved twice on the same grid, the second save finer | The same table twice, a coarser second save, cropping or resizing between the saves, progressive files | None seen: no region flagged in 180 untouched test files and 186 re-saved camera files; flat drawings fit the model poorly |
 | Copy-move (blocks) | Clone at the same size and angle, not flat | Scaling, rotation, heavy recompression, clones under 16 pixels | Repeating textures: railings, tiles, windows (filtered by shift voting) |
 | Copy-move (keypoints) | Enough keypoints in the clone | Smooth content, clones under about 40 pixels in small pictures | Text, logos and printed patterns, where the same shapes really repeat |
 | Demosaicing traces | A picture that kept its traces: raw conversions, PNG or TIFF, JPEG at 95 or better | Camera and phone pipelines (noise reduction, sharpening, multi-frame), JPEG below about 90, any resizing | A region next to blown-out highlights (one in 89 real files) |
@@ -30,6 +31,7 @@ Measured on simulated forgeries in scikit-image sample pictures; details on each
 |---|---|---|---|---|
 | Ghost of a pasted patch (on the grid) | 22 of 27 | 20 of 27 | 11 of 27 | not tested |
 | Demosaicing trace missing in a patch | 22 of 27 | 20 of 27 | 11 of 27 | 0 |
+| Double quantisation: 128x96 patch pasted between two saves, the second finer | not applicable | 11 of 11 (after 85) | 11 of 11 (after 70) | 11 of 11 (after 60) |
 | Resampling: 224x192 patch enlarged 1.5x | 8 of 9 | 0 | not tested | not tested |
 | Resampling: whole picture enlarged 1.5x | 12 of 13 | 9 of 13 | 6 of 13 | not tested |
 | Noise: patch with three times the noise | 7 of 10 | 6 of 10 | 7 of 10 | 6 of 10 |
