@@ -60,12 +60,13 @@ The reader now follows libjpeg's own rules for all of these, and for damaged dat
 | `a Huffman table the scan needs is not in the file` | The standard table was assumed, as libjpeg does. Usual in frames cut from MJPEG video, unusual in a photograph. |
 | `the components come in N scans` | Baseline, with one scan per component or group. Legal and rare. |
 | `components share an id` | The frame header names two components alike. |
-| `component N has more than one scan` | A later scan was laid over an earlier one. No encoder writes this. |
+| `component N has more than one scan` | A later scan was laid over an earlier one. No encoder writes this; `exif-inspect passes` shows what each scan drew. |
 | `the scan data runs out before the picture is complete` | Truncated or damaged; the missing blocks were left empty, as a viewer shows them. |
 | `N Huffman codes that no table holds` | Damaged data, read as zero the way libjpeg reads it. |
 | `the progressive passes stop early: ...` | A progressive file that ends before its last pass, or whose last pass has a header and no data. It opens everywhere; some coefficients never arrived or lack their lowest bits. `dq` and `stego` skip it. |
 | `after N scans the file breaks the format (...)` | The first scans are sound and something behind them is not. libjpeg refuses the whole file; a viewer that draws pass by pass shows what the first scans brought, and that is what was read. |
 | `no scan carries component N` | The frame header names a component that never arrives. libjpeg shows it as flat grey. |
+| `a quantisation table is defined again behind a scan that uses it` | libjpeg keeps the table a component was first scanned under, and so does the reader. No encoder defines one twice. |
 
 None of these lines appears for a file straight from a camera or an editor, so each one is worth a second look at who wrote the file.
 

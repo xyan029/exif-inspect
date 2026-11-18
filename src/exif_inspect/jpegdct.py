@@ -160,6 +160,27 @@ class JpegData:
 
 # --- markers ---------------------------------------------------------------
 
+@dataclass
+class Scan:
+    """One scan as the reader has just taken it in, handed to the `on_scan` hook of read()."""
+    index: int                       # 1 for the first scan
+    frame: list[Component]           # every component of the picture, in the frame's order
+    components: list[Component]      # the ones this scan carries
+    ss: int                          # first and last coefficient of the band; 0 and 63 in a
+    se: int                          # sequential file
+    ah: int                          # bit positions: the pass before this one, and this one
+    al: int
+    offset: int                      # of the SOS marker
+    end: int                         # of the marker behind the scan's data
+    short: bool                      # the data ran out before the last block
+    state: object = field(default=None, repr=False)
+
+    def coeffs(self, c: Component) -> np.ndarray | None:
+        """The component's coefficients as they stand after this scan: blocks down, blocks
+        across, 64. A view that the next scan writes into, so copy what is to be kept."""
+        return self.state(c)
+
+
 def next_marker(data: bytes, i: int) -> tuple[int, int | None, int, int]:
     """The next marker at or after i, found the way libjpeg finds it.
 
@@ -360,12 +381,13 @@ def _read_sos(seg: bytes, components: list[Component]) -> list[Component]:
 _STANDARD = {(0, 0): _STD_DC_LUMA, (1, 0): _STD_AC_LUMA, (0, 1): _STD_DC_CHROMA, (1, 1): _STD_AC_CHROMA}
 
 
-def read(data: bytes, max_blocks: int | None = None) -> JpegData:
-    """Parse a baseline JPEG into its quantised coefficients.
+def read(data: bytes, max_blocks: int | None = None, on_scan=None) -> JpegData:
+    """Parse a JPEG into its quantised coefficients.
 
     max_blocks caps the number of luma blocks decoded (the scan is decoded in
     order, so this takes the top of the picture, in whole rows of MCUs); None
-    decodes everything.
+    decodes everything. on_scan, if given, is called with a Scan after every
+    scan, which is how the picture can be followed pass by pass.
 
     The file is read the way libjpeg reads it, so that a picture a viewer
     shows is the picture analysed: fill bytes and stray bytes in front of a
@@ -394,6 +416,12 @@ def read(data: bytes, max_blocks: int | None = None) -> JpegData:
     broke = None                     # why reading stopped after the first scans, if it did
     flats: dict[int, array] = {}     # progressive: id(component) -> its coefficients, 64 per block
     work = 0                         # blocks the progressive scans have gone over
+
+    def state(c):
+        if id(c) in flats:
+            return np.frombuffer(flats[id(c)], dtype=np.intc).reshape(c.blocks_h, c.blocks_w, 64)
+        return c.coeffs
+
     i = 2
     try:
         while True:
@@ -517,6 +545,8 @@ def read(data: bytes, max_blocks: int | None = None) -> JpegData:
                     unknown += bad
                     scans += 1
                     i = end_of_scan(data, i)
+                    if on_scan:
+                        on_scan(Scan(scans, components, chosen, ss, se, ah, al, pos, i, short, state))
                     continue
                 tables = []
                 for c in chosen:
@@ -579,10 +609,12 @@ def read(data: bytes, max_blocks: int | None = None) -> JpegData:
                     notes.append(f"component {again[0].cid} has more than one scan; they were laid over "
                                  "each other as libjpeg lays them")
                 scans += 1
+                i = end_of_scan(data, i)
+                if on_scan:
+                    on_scan(Scan(scans, components, chosen, 0, 63, 0, 0, pos, i, short, state))
                 if scans == 1 and len(chosen) == len(components):
                     whole = True
                     break                    # one scan with everything: libjpeg stops reading here too
-                i = end_of_scan(data, i)
             else:
                 segments.append((marker, seg))
     except Corrupt as exc:
@@ -612,9 +644,20 @@ def read(data: bytes, max_blocks: int | None = None) -> JpegData:
         notes.append("no scan carries component" + ("s " if len(missing) > 1 else " ")
                      + (", ".join(ids[:-1]) + " and " + ids[-1] if len(ids) > 1 else ids[0])
                      + ("; they read" if len(missing) > 1 else "; it reads") + " as flat grey")
+    # libjpeg keeps for each component the table in force at its first scan. A table defined
+    # again behind that scan changes nothing a viewer shows, so the kept ones are handed out.
+    kept: dict[int, np.ndarray] = {}
+    again = False
     for c in components:
-        if c.tq in qtables and not np.array_equal(qtables[c.tq], c.q):
-            raise Unsupported("quantisation table redefined between scans")
+        again = again or (c.tq in qtables and not np.array_equal(qtables[c.tq], c.q))
+        if c.tq in kept and not np.array_equal(kept[c.tq], c.q):
+            raise Unsupported("components that share a quantisation table id and were first scanned "
+                              "under different tables")
+        kept[c.tq] = c.q
+    if again:
+        qtables = {**qtables, **kept}
+        notes.append("a quantisation table is defined again behind a scan that uses it; the first "
+                     "one counts, as in libjpeg")
     if stray:
         notes.append(f"{stray} stray byte{'s' if stray != 1 else ''} between segments")
     if fill:
