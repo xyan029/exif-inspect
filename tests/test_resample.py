@@ -137,6 +137,31 @@ def test_periodic_texture_is_not_a_trace(tmp_path):
     assert resample.analyze(path).verdict == "none"
 
 
+def test_fine_oblique_pattern_is_set_aside(tmp_path, capsys):
+    """Cloth or a screen: the pattern's multiples peak in the residual just as resampling does."""
+    w, h = 384, 320
+    rng = np.random.default_rng(4)
+    yy, xx = np.mgrid[0:h, 0:w]
+    base = 120 + 60 * np.sin(xx / 19) * np.cos(yy / 23)
+    t = np.deg2rad(20)
+    threads = np.sin(2 * np.pi * (xx * np.cos(t) + yy * np.sin(t)) / 3.3)
+    arr = np.clip(np.rint(base * (1 + 0.08 * threads) + rng.normal(0, 2, (h, w))), 0, 255)
+    path = tmp_path / "cloth.png"
+    Image.fromarray(arr.astype(np.uint8)).convert("RGB").save(path)
+    res = resample.analyze(path)
+    assert res.verdict == "none" and res.patterned
+    assert main(["resample", str(path)]) == 0
+    assert "regular pattern of its own" in capsys.readouterr().out
+
+
+def test_resized_pictures_are_not_taken_for_patterned(tmp_path):
+    for factor in (1.25, 1.5):
+        path = tmp_path / f"big_{factor}.png"
+        _enlarge(_picture(), factor).save(path)
+        res = resample.analyze(path)
+        assert res.verdict == "whole" and not res.patterned
+
+
 def test_flat_and_small_pictures(tmp_path):
     flat = tmp_path / "flat.png"
     Image.new("RGB", (256, 256), (90, 120, 150)).save(flat)

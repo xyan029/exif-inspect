@@ -26,6 +26,12 @@ A picture resized after a JPEG save also keeps that save's 8-pixel blocks,
 stretched by the factor. They show as a comb of peaks and give the factor
 exactly, including for reductions, which leave little interpolation trace.
 
+A fine regular pattern in the picture itself (cloth, a screen, a print
+raster) puts its multiples into the same spectrum, where they read like
+resampling. Such a pattern also peaks in the spectrum of the signed
+residual, which resampling leaves flat, so a picture that shows one is
+set aside with a note.
+
 A JPEG save after the resizing weakens all of this and hides a pasted
 region even at quality 95, a 2x enlargement leaves no trace of this kind,
 and the JPEG grid of the file itself puts peaks at multiples of 1/8, which
@@ -52,6 +58,8 @@ RATIO = 2.0             # a peak must stand this many times above its surroundin
 Z_PEAK = 8.0            # and this many spreads of the spectrum's own scatter
 CONTENT = 1.6           # where the picture's own spectrum rises more than this,
 OVER_CONTENT = 4.0      # the residual's peak must be this many times higher still
+PATTERN = 8.0           # height of a peak in the signed residual's spectrum: a regular pattern
+MIN_PATTERN = 0.03      # in the picture; coarser than this many cycles per pixel is plain content
 GRID = 2.5              # height of a peak at a multiple of 1/8 that shows the JPEG grid
 MAX_PEAKS = 6           # peaks kept for the report
 VOTE = 8.0              # height of a tile's best bin over its background for the tile to vote
@@ -93,16 +101,23 @@ class ResampleResult:
     flagged: np.ndarray = field(repr=False)     # tiles of the reported region
     size: tuple[int, int] = (0, 0)
     rgb: np.ndarray | None = field(default=None, repr=False)
+    patterned: bool = False          # peaks were found and set aside: the picture has a regular
+                                     # pattern of its own, which they cannot be told from
 
 
-def residual(gray: np.ndarray) -> np.ndarray:
-    """Size of each pixel's error against Kirchner's fixed predictor, zero on the border."""
+def signed_residual(gray: np.ndarray) -> np.ndarray:
+    """Each pixel's error against Kirchner's fixed predictor, zero on the border."""
     g = gray.astype(np.float32)
     out = np.zeros_like(g)
     cross = g[:-2, 1:-1] + g[2:, 1:-1] + g[1:-1, :-2] + g[1:-1, 2:]
     diag = g[:-2, :-2] + g[:-2, 2:] + g[2:, :-2] + g[2:, 2:]
-    out[1:-1, 1:-1] = np.abs(g[1:-1, 1:-1] - 0.5 * cross + 0.25 * diag)
+    out[1:-1, 1:-1] = g[1:-1, 1:-1] - 0.5 * cross + 0.25 * diag
     return out
+
+
+def residual(gray: np.ndarray) -> np.ndarray:
+    """Size of each pixel's error against the predictor."""
+    return np.abs(signed_residual(gray))
 
 
 def _window(tile: int) -> np.ndarray:
@@ -233,6 +248,36 @@ def _grid_distance(fy: np.ndarray, fx: np.ndarray) -> np.ndarray:
     return np.hypot(dy, dx)
 
 
+def patterned(linear: np.ndarray, block: float | None = None) -> bool:
+    """Whether the picture carries a regular pattern of its own: cloth, a screen, a print raster.
+
+    Resampling makes the size of the residual periodic and leaves its sign
+    alone, so the spectrum of the signed residual stays flat. A pattern in
+    the picture is periodic in the plain sense and shows there as a peak,
+    and its multiples and mixtures fill the spectrum of the residual's
+    size with peaks that read like resampling.
+
+    The blocks of an earlier JPEG save are such a pattern too, and after a
+    resize they no longer sit on the file's own grid. They peak on the
+    axes, which are left out here, and where both frequencies are
+    multiples of the stretched blocks' own (or of half of it, for chroma
+    saved at half size); `block` is their width in pixels when the comb
+    of peaks gave it, and those frequencies are left out as well.
+    """
+    ratio = linear / _background(linear)
+    n = ratio.shape[0]
+    fy = np.fft.fftfreq(n)[:, None]
+    fx = np.fft.rfftfreq(n)[None, :]
+    keep = (np.minimum(np.abs(fy), np.abs(fx)) >= 1.5 / n) & (np.hypot(fy, fx) >= MIN_PATTERN)
+    keep = keep & (_grid_distance(fy, fx) >= 1.5 / n)
+    if block:
+        half = 1 / (2 * block)
+        off_y = np.abs((fy / half + 0.5) % 1 - 0.5) * half
+        off_x = np.abs((fx / half + 0.5) % 1 - 0.5) * half
+        keep = keep & (np.maximum(off_y, off_x) >= 1.5 / n)
+    return bool((ratio[keep] >= PATTERN).any())
+
+
 def find_peaks(spec: np.ndarray, own: np.ndarray, z_min: float = Z_PEAK) -> tuple[list[Peak], bool]:
     """Peaks of the residual spectrum that the picture's own spectrum does not explain.
 
@@ -293,7 +338,8 @@ def find_peaks(spec: np.ndarray, own: np.ndarray, z_min: float = Z_PEAK) -> tupl
     return peaks, grid
 
 
-def coarse_peaks(gray: np.ndarray, res: np.ndarray) -> tuple[list[Peak], bool]:
+def coarse_peaks(gray: np.ndarray, res: np.ndarray,
+                 signed: np.ndarray | None = None) -> tuple[list[Peak], bool, bool]:
     """Peaks of the whole picture's averaged spectrum, on the largest tiles it has enough of.
 
     A resampling trace is a pure tone, so larger tiles raise it further
@@ -309,12 +355,17 @@ def coarse_peaks(gray: np.ndarray, res: np.ndarray) -> tuple[list[Peak], bool]:
             break
     usable = tile_mean(res, size) >= MIN_ENERGY
     if not usable.any():
-        return [], False
-    return find_peaks(mean_spectrum(res, size, usable), mean_spectrum(gray, size, usable))
+        return [], False, False
+    peaks, grid = find_peaks(mean_spectrum(res, size, usable), mean_spectrum(gray, size, usable))
+    if peaks and signed is not None:
+        comb = stretched_grid(peaks)
+        if patterned(mean_spectrum(signed, size, usable), comb[0] if comb else None):
+            return [], grid, True
+    return peaks, grid, False
 
 
 def local_peaks(spectra: np.ndarray, judged: np.ndarray, res: np.ndarray,
-                gray: np.ndarray) -> list[Peak]:
+                gray: np.ndarray, signed: np.ndarray | None = None) -> list[Peak]:
     """Peaks carried by one region only, too small to show in the whole picture's spectrum.
 
     Each tile's spectrum, averaged with its eight neighbours, is divided by
@@ -364,6 +415,8 @@ def local_peaks(spectra: np.ndarray, judged: np.ndarray, res: np.ndarray,
         return []
     region = _largest_component(same)
     if region.sum() < MIN_TILES:
+        return []
+    if signed is not None and patterned(mean_spectrum(signed, n, region)):
         return []
     peaks, _ = find_peaks(mean_spectrum(res, n, region), mean_spectrum(gray, n, region),
                           z_min=Z_LOCAL)
@@ -430,7 +483,8 @@ def analyze(path: str | Path) -> ResampleResult:
     crop = rgb[oy:oy + MAX_SIDE, ox:ox + MAX_SIDE]
     gray = np.asarray(Image.fromarray(crop).convert("L"), dtype=np.float32)
 
-    res = residual(gray)
+    signed = signed_residual(gray)
+    res = np.abs(signed)
     judged = tile_mean(res, tile) >= MIN_ENERGY
     empty = np.zeros(judged.shape, dtype=bool)
     strength = np.zeros(judged.shape, dtype=np.float32)
@@ -439,9 +493,9 @@ def analyze(path: str | Path) -> ResampleResult:
                               strength, judged, empty, empty, (w, h), rgb)
 
     spectra = tile_spectra(res, tile)
-    peaks, grid = coarse_peaks(gray, res)
+    peaks, grid, pattern = coarse_peaks(gray, res, signed)
     if not peaks:
-        peaks = local_peaks(spectra, judged, res, gray)
+        peaks = local_peaks(spectra, judged, res, gray, signed)
     carrying, region, box, verdict, share, lean = empty, empty, None, "none", 0.0, 0.5
     if peaks:
         strength = _smooth(tile_strength(spectra, peaks), judged)
@@ -466,7 +520,8 @@ def analyze(path: str | Path) -> ResampleResult:
                    int(ox + jj.max() * step + tile), int(oy + ii.max() * step + tile))
     return ResampleResult(verdict, peaks, grid, stretched_grid(peaks),
                           round(float(judged.mean()), 3), round(share, 3), round(lean, 3),
-                          box, tile, step, (ox, oy), strength, judged, carrying, region, (w, h), rgb)
+                          box, tile, step, (ox, oy), strength, judged, carrying, region, (w, h), rgb,
+                          pattern and verdict == "none")
 
 
 def render(res: ResampleResult) -> Image.Image:

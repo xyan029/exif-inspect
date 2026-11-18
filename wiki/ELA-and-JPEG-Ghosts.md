@@ -49,7 +49,7 @@ A JPEG save divides every DCT coefficient by a step and rounds. A second save wi
 
 - **The first table.** The picture is decoded, cropped by four pixels and transformed again, which estimates the coefficients before any rounding. Rounding those twice, with a candidate first step and then the file's own, predicts a double save; rounding them once predicts a single one. The step that explains the file's histogram best is kept for each of the first 15 AC coefficients, and three coefficients with a clear gain make a file that was saved before.
 - **Its quality.** With six or more coefficients the libjpeg quality whose table explains the histograms is named, as a range when the picture has too little texture to tell neighbouring steps apart. Another encoder's table is reported as such.
-- **By block.** Each 8x8 block gets the log likelihood ratio of the two predictions, averaged with the blocks around it. Sixteen connected blocks that read as compressed once are a region, red in the output. Flat blocks, blocks with a clipped channel and blocks over the picture's edge are not judged.
+- **By block.** Each 8x8 block gets the log likelihood ratio of the two predictions, averaged with the blocks around it. Sixteen connected blocks that read as compressed once are a region, red in the output, as long as the blocks around them read plainly as compressed twice. Flat blocks, blocks with a clipped channel and blocks over the picture's edge are not judged.
 
 ```
    ! saved as a JPEG before, with another table: 15 of the first 15 coefficients show double quantisation
@@ -61,4 +61,21 @@ A JPEG save divides every DCT coefficient by a step and rounds. A second save wi
 
 **What it needs.** A second save finer than the first. The same table twice, a coarser second save, and cropping or resizing between the saves leave no pattern. Progressive JPEGs and other formats are skipped.
 
-**Numbers.** On 12 scikit-image pictures: none of 60 files saved once read as saved before; all 72 saved twice with a finer second save were read as such with the first quality in the range named, and none had a region flagged; a 128x96 patch pasted between the saves was found in 10 or 11 of 11 for six pairs of qualities from 50 then 75 to 90 then 95, and in 3 of 11 for 80 then 85. On 62 real camera JPEGs saved again at 98, 95 and 90, a pasted 96x96 patch was found in 56, 40 and 18, and no region was flagged when nothing was pasted.
+**How it is fooled.** Tried on the test forgeries, each step added between the paste and the last save:
+
+| Step | File still read as saved twice | Patch still found |
+|---|---|---|
+| one pixel cropped, or a resize of 5% | never | never |
+| eight pixels cropped | always | always |
+| one more save at the first quality | always | never |
+| patch cut from a JPEG of the first quality, pasted on its grid | always | never |
+| noise of sigma 1 | nearly always | yes after a first save at 60 or 70, 2 of 11 after 85 |
+| noise of sigma 3 | 8 or 10 of 11 after 70 or 60, never after 85 | never |
+| blur of radius 0.8, or a 3x3 median | 1 to 3 of 11 | never |
+| dithered coefficients (Stamm and Liu, 2011) | 0 to 4 of 11 | never |
+
+A clean reading is therefore weak evidence against a forger who knows the method. The README has the full table.
+
+**A region that follows the edges.** Blur or sharpening over the whole picture between the saves changes strong edges more than flat areas, and the blocks along them can read as compressed once while the rest still reads as twice. The tool fits how far such an edit smeared the pattern and reports a region only against a clear background, which removes most of these (59 of 252 test files before, 5 after; 47 of 310 camera files before, 19 after). When it sees the smear and no clear background it prints `no region reported` with the share of blocks that read as compressed once. A reported region that traces the high-contrast outlines of the picture deserves a look at whether the whole picture was filtered.
+
+**Numbers.** On 12 scikit-image pictures: none of 60 files saved once read as saved before; all 72 saved twice with a finer second save were read as such with the first quality in the range named, and none had a region flagged; a 128x96 patch pasted between the saves was found in 10 or 11 of 11 for six pairs of qualities from 50 then 75 to 90 then 95, and in none for 80 then 85, where the two tables are too close. On 62 real camera JPEGs saved again at 98, 95 and 90, a pasted 96x96 patch was found in 56, 37 and 17, and no region was flagged when nothing was pasted.
