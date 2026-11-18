@@ -30,6 +30,7 @@ Resizing or turning computes every new pixel from a few old ones. How much a new
 | `the peaks form a comb` | The picture was a JPEG before it was resized, and the factor printed here is the one to trust. |
 | `jpeg grid : the 8-pixel JPEG grid shows` | The file was a JPEG at its current size. Peaks at multiples of 1/8 are skipped. |
 | `no resampling trace` | Nothing found, which after a JPEG save says little. |
+| `no reading: the picture carries a regular pattern of its own` | Peaks were found and set aside. Cloth, a screen or a print raster fills the spectrum with peaks that read like resampling, and the two cannot be told apart in such a picture. |
 
 ## What it cannot see
 
@@ -39,6 +40,24 @@ Resizing or turning computes every new pixel from a few old ones. How much a new
 - **Nearly nothing.** Factors within 7% of 1 and turns under 4 degrees fall below the lowest frequency read.
 - **Well-filtered reductions** of pictures that were never JPEGs.
 - **Smooth drawings**, which have almost no prediction error to analyse.
+- **Pictures with a fine regular pattern** off the axes: a weave, a screen, a scanned print. They are set aside with a note, resized or not.
+
+## How it is fooled
+
+Tried on 13 pictures enlarged 1.25x and 1.5x and saved as PNG, where 12 are found with nothing added:
+
+| After the resize | Found |
+|---|---|
+| noise up to sigma 4, blur, unsharp mask | 8 to 12 |
+| blur of radius 0.8, then JPEG 95 | 0 (9 with the JPEG save alone) |
+| median 3x3 | 6 and 7 |
+| median 5x5 | 0 and 3 |
+| sampling positions jittered by 0.2 pixels (Kirchner and Böhme, 2008) | 5 and 4, three of each with the right factor |
+| a second resize by a few percent | 11 or 12, with the reading of the combination |
+
+A pasted patch that was median-filtered or resized with jitter before pasting was located in none of 36 files.
+
+The opposite error mattered more. A fine oblique pattern added to a picture that nothing had resized gave a resampling reading in 54 of 78 files (pattern at 8% and 2% contrast, and a halftone raster), usually across the whole picture and with a factor. The signed prediction error tells the two apart: resampling leaves its spectrum flat, a pattern in the picture peaks in it. With that check none of the 78 gets a reading. A pattern that runs along one axis still can (2 of 26), because the blocks of an earlier JPEG save look the same after a resize and are read as a stretched grid.
 
 ## How well it works
 

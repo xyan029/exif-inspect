@@ -215,9 +215,9 @@ A JPEG save divides every DCT coefficient by a step from its quantisation table 
 
 The tool reads the quantised coefficients straight from the file, with the decoder `stego` uses, and works on the first 15 AC coefficients of the luma channel.
 
-- **The first table.** To judge a candidate first step the tool needs the coefficients as they were before any rounding. Decoding the picture, cropping four pixels off the top and left and taking the DCT again breaks the block grid and gives a good estimate of them. Rounding those with a candidate step and then with the file's own predicts the histogram a double save would give; rounding them once predicts a single save. Every step from 1 to 48 is tried, in a mixture that lets up to half of the blocks be rounded once. A coefficient counts when its best step gains 0.03 nats per coefficient over a single save and 1.5 times what the model leaves unexplained, and three coefficients make a file that was saved before.
+- **The first table.** To judge a candidate first step the tool needs the coefficients as they were before any rounding. Decoding the picture, cropping four pixels off the top and left and taking the DCT again breaks the block grid and gives a good estimate of them. Rounding those with a candidate step and then with the file's own predicts the histogram a double save would give; rounding them once predicts a single save. Every step from 1 to 48 is tried, in a mixture that lets up to half of the blocks be rounded once. Noise, sharpening or a filter over the whole picture between the saves moves every coefficient a little before the second rounding and smears the pattern, so once a step is found the spread of that movement is fitted as well, from 0.3 to 3 coefficient units. A coefficient counts when its best step gains 0.03 nats per coefficient over a single save and 1.5 times what the model leaves unexplained, and three coefficients make a file that was saved before.
 - **Its quality.** With six or more coefficients, the libjpeg quality whose table explains the histograms as well as free steps do (97% of the gain) is named. In a picture with little texture neighbouring steps can give the same histogram, and the tool then names a range of qualities.
-- **By block.** Each 8x8 block gets the log likelihood ratio of its coefficients under the two predictions, averaged over the blocks within two of it. A ratio of 4 or more reads as compressed once; 16 connected blocks are reported as a region and tinted red. Blocks with fewer than two non-zero coefficients, with a channel at black or white (clipping between the saves follows no rounding model) or hanging over the edge of the picture are not judged.
+- **By block.** Each 8x8 block gets the log likelihood ratio of its coefficients under the two predictions, averaged over the blocks within two of it. A ratio of 4 or more reads as compressed once; 16 connected blocks are reported as a region and tinted red, provided the judged blocks outside them read plainly as compressed twice (a median ratio of -2 or lower). A region is a claim about one part against the rest, and a picture whose pattern is weak everywhere gives the rest no clear reading; the output then says so and reports no region. Blocks with fewer than two non-zero coefficients, with a channel at black or white (clipping between the saves follows no rounding model) or hanging over the edge of the picture are not judged.
 
 A picture with a 128x96 patch of another pasted in between a save at quality 70 and one at 90:
 
@@ -250,23 +250,50 @@ A patch of another sample pasted in at a random place off the grid between the t
 | 60 then 80 | 11 | 12 | 4 |
 | 70 then 90 | 11 | 11 | 0 |
 | 75 then 85 | 10 | 10 | 3 |
-| 80 then 85 | 3 | not run | 1 |
+| 80 then 85 | 0 | not run | 1 |
 | 85 then 95 | 11 | 11 | 0 |
 | 90 then 95 | 11 | 10 | 0 |
 | 85 then 85, 85 then 75, 90 then 75 | 0 | not run | 0 |
 
-`dq` reported no region off its patch in any of these files. The region covers a median of 70% to 92% of the patch for the pairs found throughout, and less where the patch is smooth or clipped. `ghost` is on the table because the two tools answer opposite cases. Here the picture has the JPEG past and the patch has none, which a ghost search has little to hold on to. With the roles swapped, a 128x96 patch from a quality 60 JPEG pasted on the grid into a picture with no JPEG past and saved once at 90 or 95, `ghost` finds 8 and 7 of 11 and `dq` reports nothing in any of the 22 files, since the picture as a whole was compressed once.
+`dq` reported no region off its patch in any of these files. With 80 then 85 the two tables are too close for the picture around the patch to read plainly as compressed twice, and no region is reported. The region covers a median of 70% to 92% of the patch for the pairs found throughout, and less where the patch is smooth or clipped. `ghost` is on the table because the two tools answer opposite cases. Here the picture has the JPEG past and the patch has none, which a ghost search has little to hold on to. With the roles swapped, a 128x96 patch from a quality 60 JPEG pasted on the grid into a picture with no JPEG past and saved once at 90 or 95, `ghost` finds 8 and 7 of 11 and `dq` reports nothing in any of the 22 files, since the picture as a whole was compressed once.
 
 Real files: of the 89 JPEGs in the exif-samples collection, 23 have fewer than 500 blocks and are skipped. Of the other 66, 65 show no earlier table, as files straight from a camera should. The one that does carries `PMB Service Uploader` in its `Software` tag, Sony's upload tool, so it was indeed saved again. Opening the 62 clean ones of at least 256 pixels and saving them again, with and without a 96x96 patch of another photo pasted in:
 
 | Second save | read as saved twice | region flagged, nothing pasted | patch found |
 |---|---|---|---|
 | quality 98 | 59 of 62 | 0 | 56 |
-| quality 95 | 55 | 0 | 40 |
-| quality 90 | 33 | 0 | 18 |
-| quality 85 | 16 with a patch | not run | 12 |
+| quality 95 | 55 | 0 | 37 |
+| quality 90 | 33 | 0 | 17 |
+| quality 85 | 16 with a patch | not run | 11 |
 
 No region was reported off its patch here either. Cameras save at high quality with tables of their own, so a second save has to be finer still to leave a clear pattern, and the rate falls as the second quality does. A 16-megapixel file takes about twelve seconds, nearly all of it spent reading the coefficients; larger files are read from the top down to 200 000 blocks.
+
+**Red team.** What a forger can add to the forgeries above (128x96 patch) to get past the tool. Each cell gives the files read as saved twice, then the patches found, of 11; the decibels say how far the step moves the pixels.
+
+| Added step | 70 then 90 | 60 then 80 | 85 then 95 |
+|---|---|---|---|
+| nothing | 11, 11 | 11, 11 | 11, 11 |
+| *between the paste and the last save* | | | |
+| Gaussian noise, sigma 1 (48 dB) | 11, 11 | 11, 11 | 10, 2 |
+| noise, sigma 2 (42 dB) | 10, 5 | 11, 9 | 1, 0 |
+| noise, sigma 3 (39 dB) | 8, 0 | 10, 0 | 0, 0 |
+| Gaussian blur, radius 0.5 (37 to 38 dB) | 8, 2 | 7, 2 | 4, 1 |
+| blur, radius 0.8 (31 to 32 dB) | 3, 0 | 3, 0 | 3, 0 |
+| median 3x3 (30 to 31 dB) | 3, 0 | 3, 0 | 1, 0 |
+| unsharp mask, radius 1, 60% (35 dB) | 9, 4 | 10, 5 | 4, 0 |
+| 1 pixel cropped off the top and left | 0, 0 | 0, 0 | 0, 0 |
+| 4 pixels cropped | 6, 1 | 6, 0 | 6, 0 |
+| 8 pixels cropped, which keeps the grid | 11, 11 | 11, 11 | 11, 11 |
+| resized to 0.95x or 1.05x | 0, 0 | 0, 0 | 0, 0 |
+| saved once more at the first quality | 11, 0 | 11, 0 | 11, 0 |
+| coefficients dithered (29 to 35 dB) | 1, 0 | 4, 0 | 0, 0 |
+| *the patch itself* | | | |
+| cut from a JPEG at the first quality and pasted on its grid | 11, 0 | 11, 0 | 11, 0 |
+| the same patch pasted off its grid | 11, 11 | 11, 11 | 11, 11 |
+
+Three steps cost nothing visible and work every time: cropping one pixel, resizing by a few percent, and saving once more at the first quality before the final save, which gives the patch the same history as the picture around it. A patch that already carries the first table and lands on the grid is invisible for the same reason. Noise and filters hide the patch at a price in picture quality, and a fine first save (85 then 95) gives way soonest. The dither is the one step built for the purpose (Stamm and Liu, [Anti-forensics of digital image compression](https://doi.org/10.1109/TIFS.2011.2119314), 2011): every coefficient is spread over its rounding bin so that the histogram is smooth again. A clean `dq` reading therefore says that no undisguised double save is present, and a forger who knows the method has several ways to produce one. In 2 of these 495 files, a blur and an unsharp mask after a first save at 85, a region was reported off the patch.
+
+The same steps on a picture saved twice with nothing pasted are the test that changed the tool. A weakened pattern has a weakest stretch, and the first version reported that stretch as a region: in 59 of 252 files made from the sample pictures (7 of the steps above, 3 pairs, 12 pictures) and in 47 of 310 made from 31 of the camera files (5 steps, second save at 95 and at 90). Fitting the spread and asking for a clear background brought that to 5 of 252 and 19 of 310. All 24 that remain follow a blur or an unsharp mask. A filter changes strong edges more than flat areas, so the blocks along them stop fitting the first step while the rest still does, and a region that traces the high-contrast outlines of a picture softened or sharpened as a whole is that case. The price is small: the three patches found with 80 then 85 are gone, and so are 3 of 40, 1 of 18 and 1 of 12 on the camera files at 95, 90 and 85.
 
 Six of the 16 sample pictures carry an earlier table themselves when saved once at 98: coins (quality 85, the value `ghost` reads from it too), the scanned page (an encoder that is not libjpeg), retina, the Hubble field, rocket and grass. Grass shows it on three high coefficients only, with the steps of quality 90, and the pixels of the PNG confirm it: the coefficient at zigzag position 15 lies on average 0.05 of a step from a multiple of 8, where a picture with no JPEG past would give 0.25, and it does so only on the picture's own grid. Synthetic drawings with flat colours and hard edges are a poor fit for the model: the colour wheel sample, saved twice, is read as such for 3 of the 6 pairs with a finer second save, and never has a region flagged.
 
@@ -357,6 +384,7 @@ exif-inspect resample photo.png       # writes photo_resample.png when a trace i
 Enlarging, shrinking or turning a picture computes every new pixel from a few old ones. How much a new pixel owes to its neighbours depends on where it falls between the old ones, and that position repeats: after enlarging by 1.25, every fifth pixel sits exactly on an old one. The picture then carries a periodic pattern in how well each pixel is predicted by its neighbours (Popescu and Farid, [Exposing digital forgeries by detecting traces of resampling](https://doi.org/10.1109/TSP.2004.839932), 2005), and a fixed predictor is enough to show it as sharp peaks in the spectrum of the prediction error (Kirchner, [Fast and reliable resampling detection by spectral analysis of fixed linear predictor residue](https://doi.org/10.1145/1411328.1411333), 2008). An object scaled to fit before it is pasted in carries the pattern on its own, so the tool reports where the trace is as well as whether it is there.
 
 - **Peaks.** Each pixel is predicted from its eight neighbours and the size of the error is kept. Its spectrum is averaged over half-overlapping tiles, 256 pixels wide where the picture has 30 of them and 128 or 64 otherwise, and every frequency is compared with the median of its surroundings, of its row and of its column. A peak counts when it stands 2 times above that and 8 spreads of the spectrum's own scatter, and lies at least 0.07 cycles per pixel from zero. Cloth, brick and print are periodic too, so where the picture's own spectrum rises, the peak in the error must be 4 times higher still.
+- **Patterns in the picture.** Resampling makes the size of the error periodic and leaves its sign alone, so the spectrum of the signed error stays flat. A fine weave, a screen or a print raster is periodic in the plain sense: it peaks in the signed error's spectrum, and its multiples and mixtures fill the spectrum of the error's size with peaks that read like resampling. When the signed spectrum has a peak 8 times above its surroundings off both axes, the peaks are set aside and the output says that the picture has a regular pattern of its own. Peaks on the axes are left out of this test, and so are the frequencies of a stretched JPEG grid once the comb has given its width, since the blocks of an earlier save are a pattern of exactly that kind.
 - **Reading.** A peak at frequency `f` on an axis comes from enlarging by `1/(1-f)` or `1/f`, from reducing to `1/(1+f)`, or, when `f` is small, from a turn by `asin(f)`; all of them are printed. A peak off the axes that fits a pure turn is read as its angle.
 - **JPEG blocks.** A picture resized after a JPEG save keeps that save's 8-pixel blocks, stretched by the factor. They show as a comb, peaks at two or more multiples of one frequency, and the comb gives the factor directly: blocks 10.0 pixels wide mean 1.25x. Reductions leave little interpolation trace, and the comb is how most of them are found.
 - **By region.** The peaks' height is measured in every 64-pixel tile against the tile's own spectrum, and smoothed by a median over the tile and its neighbours. When half of the tiles carry the trace it belongs to the picture; otherwise six or more connected tiles are reported as a region and tinted red. A faint trace everywhere is told from a strong one in one place by a sign test on the other tiles, since chance lifts a frequency above its surroundings in half of them. When the whole picture's spectrum shows nothing, each tile votes for its own strongest frequency, and a connected group voting alike is tested as a region of its own; only peaks on the axes are accepted there, because an oblique peak in one region is usually a texture.
@@ -374,7 +402,7 @@ A 512-pixel picture with a 224x192 patch of another picture, enlarged 1.5 times,
    output : splice_resample.png (red = carries the trace, dimmed = cannot judge, white frame = area analysed)
 ```
 
-**Evaluation.** Of 16 scikit-image sample pictures as distributed, three show a trace: the astronaut across the whole picture (peaks at 0.176 on both axes, 11 times their surroundings, which reads as 1.21x), the scanned text (0.352), and one region of the coffee cup. Their history is unknown, so they are left out, and the other 13 (191 to 1411 pixels on the short side) are the untouched set. Saved as PNG and as JPEG at quality 95, 90, 80 and 70, none of the 65 files is flagged.
+**Evaluation.** Of 16 scikit-image sample pictures as distributed, two show a trace: the astronaut across the whole picture (peaks at 0.176 on both axes, 11 times their surroundings, which reads as 1.21x) and one region of the coffee cup. The photographed text is set aside for a pattern of its own, 12.8 times above its surroundings in the signed error's spectrum; before that check its peak at 0.352 read as an enlargement by 1.54. The history of all three is unknown, so they are left out, and the other 13 (191 to 1411 pixels on the short side) are the untouched set. Saved as PNG and as JPEG at quality 95, 90, 80 and 70, none of the 65 files is flagged.
 
 The whole picture resized with bicubic interpolation, or turned and cropped to its centre; found, and in brackets how many of those carry the true factor or angle among their readings:
 
@@ -390,7 +418,7 @@ The whole picture resized with bicubic interpolation, or turned and cropped to i
 | reduced to 0.5x | 0 of 12 | 0 | 0 |
 | turned 5 degrees | 5 of 12 (2) | 2 (1) | 1 (0) |
 | turned 10 degrees | 6 (3) | 1 (1) | 1 (0) |
-| turned 20 degrees | 6 (4) | 0 | 1 (0) |
+| turned 20 degrees | 5 (3) | 0 | 0 |
 | turned 35 degrees | 10 (9) | 7 (7) | 3 (3) |
 | turned 45 degrees | 10 (10) | 8 (7) | 3 (3) |
 
@@ -416,10 +444,46 @@ The 63 clean ones resized afterwards, which is what happens to most pictures on 
 |---|---|---|---|
 | 1.25x | 61 of 63 (61, comb 42) | 52 (32, comb 3) | 33 (23, comb 0) |
 | 1.5x | 61 (61, comb 38) | 57 (35, comb 1) | 52 (14, comb 0) |
-| 0.8x | 31 (28, comb 28) | 2 (1, comb 1) | 1 (0) |
+| 0.8x | 30 (28, comb 28) | 1 (1, comb 1) | 1 (0) |
 | 0.5x | 3 of 61 (0) | 1 (0) | 0 |
 
 Real pictures do better than the samples after a JPEG save because the first save's blocks add their own peaks, and the reading suffers for the same reason: a tooth of the comb read alone gives a wrong factor, so after a lossy save the verdict that the picture was resized is more reliable than the factor printed with it. Halving turns 8-pixel blocks into 4-pixel ones, which land on the grid and stay hidden.
+
+**Red team.** First, what hides a trace. The 13 untouched pictures enlarged with bicubic interpolation, one more step applied, saved as PNG unless noted; found, and in brackets with the true factor among the readings:
+
+| After the resize | 1.25x | 1.5x | 1.5x, then JPEG 95 |
+|---|---|---|---|
+| nothing | 12 (12) | 12 (12) | 9 (8) |
+| Gaussian noise, sigma 1 | 12 (12) | 11 (11) | 9 (7) |
+| noise, sigma 2 | 9 (9) | 9 (9) | 8 (8) |
+| noise, sigma 4 | 9 (9) | 8 (8) | 8 (8) |
+| Gaussian blur, radius 0.5 | 12 (12) | 12 (12) | 5 (3) |
+| blur, radius 0.8 | 12 (12) | 11 (11) | 0 |
+| unsharp mask | 12 (12) | 12 (12) | 10 (8) |
+| median 3x3 | 6 (5) | 7 (5) | 0 |
+| median 5x5 | 0 | 3 (2) | 1 (0) |
+| a second resize to 0.97x | 11 (11) | 12 (0) | 5 (0) |
+| a second resize to 0.9x | 11 (0) | 11 (0) | 4 (0) |
+
+Noise, blur and sharpening leave a lossless file readable. A median filter is the cheap way out, as Kirchner and Böhme showed ([Hiding traces of resampling in digital images](https://doi.org/10.1109/TIFS.2008.2008214), 2008): 3x3 halves the detections and 5x5 leaves 0 and 3, at about 35 and 31 dB. Blur becomes effective once a JPEG save follows it. A second resize keeps the picture detectable and replaces the reading with that of the combination, so the factor printed belongs to no single step. Their second method moves every sampling position by a small random amount, which breaks the period at its source: with a jitter of 0.2 pixels 5 of 13 are found at 1.25x and 3 read right (11 and 10 without jitter, same interpolation), and with 0.3 pixels 4 and none. The choice of kernel matters little for enlargements, 11 to 13 of 13 for nearest neighbour, bilinear, bicubic, Lanczos, box and Hamming at both factors; at 0.75x nearest neighbour is found in 12 of 13 and the filtered kernels in 4 to 6.
+
+A 224x192 patch enlarged, laundered and then pasted into a PNG, located of 9 at 1.25x and 1.5x: 5 and 7 with nothing added, 3 and 4 after noise of sigma 1, 3 and 1 after sigma 2, 5 and 6 after a blur of radius 0.5, 5 and 7 after the unsharp mask, and none after a 3x3 median or a jitter of 0.2 pixels. In none of the 144 files was anything reported off the patch.
+
+Second, what imitates a trace. Nothing is resized here; each of the 13 pictures gets a regular pattern, is saved as PNG and as JPEG at 92, and should read as clean. Files given a resampling reading, of 26:
+
+| Added to the picture | before the pattern check | now |
+|---|---|---|
+| a fine oblique pattern, period 3.3 pixels, 8% contrast (a weave, a screen) | 21 | 0 |
+| the same at 2% contrast | 15 | 0 |
+| a 45 degree halftone raster of 6 pixels, slightly blurred (a scanned print) | 18 | 0 |
+| ordered dither to 8 levels per channel | 6 | 2 |
+| ordered dither to 32 levels | 1 | 0 |
+| a pattern along one axis, period 5 pixels | 2 | 2 |
+| a Bayer mosaic demosaiced bilinearly | 1 | 1 |
+| every second line repeated | 0 | 0 |
+| unsharp mask, blur, 3x3 median or noise alone (104 files) | 1 | 0 |
+
+This was the larger hole: 65 of 338 files read as resampled, most of them across the whole picture and with a factor printed. The peaks are real. A pattern of period `p` puts its multiples and their aliases into the spectrum of the error's size, and each one reads as some factor or angle. The check on the signed error described above takes 60 of the 65 away. A pattern along an axis is left to the stretched-grid reading and stays ambiguous by construction, and in three files the dither or the mosaic leaves a pattern under the threshold. The cost on pictures that were resized: none of the 63 camera files is set aside at 1.25x or 1.5x, one of 31 found at 0.8x is, and so is one of the six sample pictures found after a 20 degree turn.
 
 ## XMP editing history
 

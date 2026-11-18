@@ -1,6 +1,7 @@
 import io
 
 import numpy as np
+import pytest
 from PIL import Image
 
 from exif_inspect import dq, jpegdct
@@ -132,6 +133,33 @@ def test_patch_off_the_grid_and_grayscale_file(tmp_path):
     res = dq.analyze(path)
     assert res.verdict == "region"
     assert _inside(res, (131, 77, 231, 167)) > 0.95
+
+
+def _noisy(img, sigma, seed=1):
+    rng = np.random.default_rng(seed)
+    arr = np.asarray(img, dtype=np.float64) + rng.normal(0, sigma, (img.height, img.width, 3))
+    return Image.fromarray(np.clip(np.rint(arr), 0, 255).astype(np.uint8))
+
+
+@pytest.mark.parametrize("first, second, sigma", [(70, 90, 2), (60, 80, 3)])
+def test_noise_over_the_whole_picture_gives_no_region(tmp_path, first, second, sigma):
+    """Noise between the saves weakens the pattern everywhere; its weakest stretch is no patch."""
+    path = tmp_path / "noisy.jpg"
+    _noisy(_through_jpeg(_picture(), first), sigma).save(path, "JPEG", quality=second)
+    res = dq.analyze(path)
+    assert res.verdict == "double"
+    assert res.box is None and not res.flagged.any()
+
+
+def test_patch_is_located_under_light_noise(tmp_path):
+    host = _through_jpeg(_picture(), 70)
+    x0, y0, x1, y1 = PATCH
+    host.paste(_picture((256, 256), seed=9).crop((0, 0, x1 - x0, y1 - y0)), (x0, y0))
+    path = tmp_path / "forged_noisy.jpg"
+    _noisy(host, 2).save(path, "JPEG", quality=90)
+    res = dq.analyze(path)
+    assert res.verdict == "region" and not res.smeared
+    assert _inside(res) > 0.95
 
 
 def test_clipped_blocks_are_not_judged(tmp_path):

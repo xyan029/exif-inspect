@@ -655,6 +655,11 @@ def resample_main(argv: list[str]) -> int:
         if res.jpeg_grid:
             print("   jpeg grid : the 8-pixel JPEG grid shows; peaks on it are never counted, so "
                   "factors such as 1.14x, 1.33x, 1.6x and 4x stay hidden")
+        if res.verdict == "none" and res.patterned:
+            print("   no reading: the picture carries a regular pattern of its own (cloth, a "
+                  "screen, a print raster), and its peaks cannot be told from a resampling "
+                  "trace.\n")
+            continue
         if res.verdict == "none":
             print("   no resampling trace. A 2x enlargement and a well-filtered reduction leave "
                   "none, and a JPEG save afterwards can erase one.\n")
@@ -752,6 +757,10 @@ def dq_main(argv: list[str]) -> int:
             out = Path(args.output) if args.output else src.with_name(f"{src.stem}_dq.png")
             dq.render(res).save(out)
             print(f"   output : {out} (red = compressed once, dimmed = cannot judge)")
+        elif res.smeared:
+            print(f"   no region reported: {res.single_fraction:.0%} of checkable blocks read as "
+                  "compressed once, and the others give no clear reading either. Noise, "
+                  "sharpening or a filter over the whole picture between the saves does this.")
         else:
             print("   no region stands apart: the checkable blocks were all compressed twice")
         print()

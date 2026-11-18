@@ -29,6 +29,12 @@ The pattern is strong when the second save is the finer one, weak when
 it is coarser, and absent when the two tables agree or when the picture
 was cropped off the grid or resized between the saves. A file with no
 pattern may still have been saved more than once.
+
+Noise, sharpening or a filter over the whole picture between the saves
+smears the pattern everywhere. The spread of that smear is fitted with
+the step, and a region is reported only when the blocks outside it still
+read plainly as compressed twice; a weakened pattern always has a
+weakest stretch, and without those two checks it reads as a patch.
 """
 
 from __future__ import annotations
@@ -46,6 +52,8 @@ FREQS = tuple(range(1, 16))   # coefficients used, in zigzag order: the first 15
 RANGE = 60                    # coefficient values beyond this are pooled
 Q1_MAX = 48                   # largest first step tried
 NOISE = 0.3                   # rounding of pixels between the saves, in coefficient units
+SPREADS = (0.3, 0.6, 1.0, 1.5, 2.2, 3.0)   # wider spreads tried once a step is found: noise,
+                              # sharpening or blur between the saves smears the pattern
 SAMPLES = 60000               # calibrated blocks the predictions are drawn from
 SHARES = (0.0, 0.05, 0.1, 0.2, 0.3, 0.4, 0.5)   # shares of blocks rounded once that are tried
 GAIN = 0.03                   # nats per coefficient a first step must gain over a single save,
@@ -56,6 +64,8 @@ QUALITY_FIT = 0.97            # share of the gain a libjpeg table must reach to 
 MIN_FREQS = 3                 # coefficients that must show the pattern,
 MAP_FREQS = 6                 # and how many it takes before single blocks are judged
 FLAG = 4.0                    # smoothed log likelihood ratio that reads as compressed once
+BACKGROUND = -2.0             # median ratio the blocks outside a region must stay under: a
+                              # region is reported against a picture that reads as compressed twice
 CLIP = 1                      # pixels this close to black or white count as clipped
 MIN_NONZERO = 2               # non-zero coefficients a block needs to be judged
 MIN_BLOCKS = 16               # connected flagged blocks that make a region
@@ -74,6 +84,7 @@ class Step:
     first: int                       # the earlier save's step
     gain: float                      # nats per coefficient over a single save
     once: float = 0.0                # share of blocks this coefficient puts at a single save
+    left: float = 0.0                # nats per coefficient the fitted model leaves unexplained
 
 
 @dataclass
@@ -91,6 +102,7 @@ class DqResult:
     flagged: np.ndarray | None = field(default=None, repr=False)   # blocks of the reported region
     size: tuple[int, int] = (0, 0)
     rgb: np.ndarray | None = field(default=None, repr=False)
+    smeared: bool = False            # blocks read as compressed once, with no clear background
 
 
 def block_dct(pixels: np.ndarray) -> np.ndarray:
@@ -140,6 +152,17 @@ def first_step(observed: np.ndarray, calibrated: np.ndarray, noise: np.ndarray, 
             if gain > best[1]:
                 best = (step, gain, share, double)
     step, gain, share, double = best
+    if step:
+        # An edit of the whole picture between the saves (noise, sharpening, a filter) moves
+        # every coefficient a little before the second rounding. Fitting that spread keeps
+        # such a picture from reading as a patchwork of blocks compressed once.
+        rounded = np.round(calibrated / step) * step
+        for spread in SPREADS[1:]:
+            wide = _predict(np.round((rounded + noise * (spread / NOISE)) / current))
+            for s in SHARES:
+                g = float((seen * np.log((1 - s) * wide + s * single)).sum()) - base
+                if g > gain:
+                    gain, share, double = g, s, wide
     mix = (1 - share) * double + share * single
     left = float((seen[filled] * np.log(seen[filled] / mix[filled])).sum())
     return step, gain, left, share, single, double, gains
@@ -225,7 +248,7 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
             observed, calibrated[:, z], noise, current)
         if gain < GAIN or gain < FIT * left or (observed != 0).mean() < MIN_FILLED:
             continue
-        steps.append(Step(z, current, step, round(gain, 3), share))
+        steps.append(Step(z, current, step, round(gain, 3), share, round(left, 4)))
         found[z] = gains
         idx = np.clip(observed, -RANGE, RANGE) + RANGE
         ratio += np.log(single[idx] / double[idx])
@@ -251,18 +274,25 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
     region = np.zeros_like(judged)
     box = None
     verdict = "double"
+    smeared = False
     if once.any() and len(steps) >= MAP_FREQS:
         comp = _largest_component(once)
         if comp.sum() >= MIN_BLOCKS:
-            verdict, region = "region", comp
-            ii, jj = np.nonzero(comp)
-            box = (int(jj.min() * 8), int(ii.min() * 8),
-                   int(min(size[0], (jj.max() + 1) * 8)), int(min(size[1], (ii.max() + 1) * 8)))
+            # Noise, sharpening or a filter over the whole picture between the saves weakens
+            # the pattern everywhere, and its weakest stretch then looks like a region. A
+            # real one stands against blocks that still read plainly as compressed twice.
+            rest = judged & ~comp
+            if rest.any() and float(np.median(smooth[rest])) <= BACKGROUND:
+                verdict, region = "region", comp
+                ii, jj = np.nonzero(comp)
+                box = (int(jj.min() * 8), int(ii.min() * 8),
+                       int(min(size[0], (jj.max() + 1) * 8)), int(min(size[1], (ii.max() + 1) * 8)))
+            else:
+                smeared = True
     return DqResult(verdict, "", steps, libjpeg_quality(found) if len(steps) >= MAP_FREQS else None,
                     round(float(judged.mean()), 3),
                     round(float(once.sum() / max(1, judged.sum())), 3),
-                    box, round(covered, 3), smooth, judged, region, size, rgb)
-
+                    box, round(covered, 3), smooth, judged, region, size, rgb, smeared)
 
 def render(res: DqResult) -> Image.Image:
     """The picture dimmed where it cannot be judged, red where it was compressed once."""
