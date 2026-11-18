@@ -180,10 +180,15 @@ def test_files_that_cannot_be_read_are_skipped(tmp_path):
     res = dq.analyze(png)
     assert res.verdict == "skipped" and "not a JPEG" in res.note
 
-    progressive = tmp_path / "progressive.jpg"
-    _picture().save(progressive, "JPEG", quality=85, progressive=True)
-    res = dq.analyze(progressive)
-    assert res.verdict == "skipped" and "baseline" in res.note
+    # a progressive file cut after its fifth scan: every coefficient is in, the last bits are missing
+    buf = io.BytesIO()
+    _picture().save(buf, "JPEG", quality=85, progressive=True)
+    data = buf.getvalue()
+    scans = [k for k in range(len(data) - 1) if data[k] == 0xFF and data[k + 1] == 0xDA]
+    early = tmp_path / "early.jpg"
+    early.write_bytes(data[:scans[5]] + b"\xff\xd9")
+    res = dq.analyze(early)
+    assert res.verdict == "skipped" and "passes stop early" in res.note
 
     small = tmp_path / "small.jpg"
     _picture((96, 96)).save(small, "JPEG", quality=85)

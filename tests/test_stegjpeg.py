@@ -6,6 +6,7 @@ from PIL import Image
 
 from exif_inspect import jpegdct, stegjpeg
 from exif_inspect.cli import main
+from progressive_writer import write_progressive
 
 
 def _scene(size=(512, 384), seed=5):
@@ -57,10 +58,13 @@ def test_max_blocks_caps_the_read():
     assert 500 <= jd.luma.coeffs.shape[0] * jd.luma.coeffs.shape[1] < 64 * 48
 
 
-def test_progressive_is_refused():
-    data = _jpeg(_scene((160, 96)), quality=85, progressive=True)
-    with pytest.raises(jpegdct.Unsupported):
-        jpegdct.read(data)
+def test_progressive_twin_holds_the_same_coefficients():
+    scene = _scene((160, 96))
+    base = jpegdct.read(_jpeg(scene, quality=85))
+    prog = jpegdct.read(_jpeg(scene, quality=85, progressive=True))
+    assert prog.progressive and prog.complete and not base.progressive
+    for a, b in zip(base.components, prog.components):
+        assert np.array_equal(a.coeffs, b.coeffs)
 
 
 # --- the detectors -------------------------------------------------------------
@@ -119,9 +123,10 @@ def test_cli_stego_on_jpeg(tmp_path, capsys):
     q = _write(tmp_path, "j.jpg", stegjpeg.embed_jsteg(clean, np.random.default_rng(1).integers(0, 2, usable)))
     assert main(["stego", str(q)]) == 0
     assert "! LSB replacement in the coefficients likely" in capsys.readouterr().out
-    prog = _write(tmp_path, "p.jpg", _jpeg(_scene((160, 96)), quality=80, progressive=True))
+    # the progressive form of the same payload is read and flagged like the baseline one
+    prog = _write(tmp_path, "p.jpg", write_progressive(jpegdct.read(q.read_bytes())))
     assert main(["stego", str(prog)]) == 0
-    assert "progressive" in capsys.readouterr().out
+    assert "! LSB replacement in the coefficients likely" in capsys.readouterr().out
 
 
 def _write(folder, name, data):

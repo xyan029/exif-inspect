@@ -59,7 +59,7 @@ A JPEG save divides every DCT coefficient by a step and rounds. A second save wi
 
 **When to use which.** `dq` answers the case where the picture has a JPEG past and the edit has none: a camera JPEG opened, changed and saved again. `ghost` answers the opposite one, a patch with a low-quality past in a picture without it. On 11 forgeries of the first kind `dq` found 10 or 11 and `ghost` 0 to 4, depending on the qualities; on 11 of the second kind `ghost` found 8 and `dq` none.
 
-**What it needs.** A second save finer than the first. The same table twice, a coarser second save, and cropping or resizing between the saves leave no pattern. Progressive JPEGs and other formats are skipped.
+**What it needs.** A second save finer than the first. The same table twice, a coarser second save, and cropping or resizing between the saves leave no pattern. Baseline and progressive JPEGs are read alike. A progressive file whose last passes are missing, an arithmetic-coded one and other formats are skipped.
 
 **How it is fooled.** Tried on the test forgeries, each step added between the paste and the last save:
 

@@ -257,7 +257,6 @@ DAMAGE = {
     "restart interval cut short": lambda: _before(PLAIN, 0xDA, _seg(0xDD, b"\x01")),
     "segment longer than the file": lambda: PLAIN[:_offset(PLAIN, 0xC4) + 60],
     "segment length 1": lambda: _before(PLAIN, 0xDA, b"\xff\xdb\x00\x01"),
-    "one component has no scan": lambda: _encode(JD, layout=[[0], [1]]),
 }
 
 
@@ -392,7 +391,10 @@ def _claiming(data, width, height):
 
 
 def test_a_kilobyte_claiming_a_huge_picture_is_cheap():
-    bomb = _claiming(_jpeg(_scene().convert("L"), quality=85), 65535, 65535)
+    small = _jpeg(_scene().convert("L"), quality=85)
+    with pytest.raises(jpegdct.Corrupt, match="65500"):       # past the size libjpeg takes at all
+        jpegdct.read(_claiming(small, 65535, 65535))
+    bomb = _claiming(small, 65500, 65500)
     assert len(bomb) < 2000
     with pytest.raises(jpegdct.Unsupported, match="too large"):
         jpegdct.read(bomb)

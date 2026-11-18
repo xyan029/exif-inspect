@@ -20,8 +20,8 @@ families leave two different statistical traces:
   content would have. The ratio reported here follows their estimator on
   the (0,1), (1,0) and (1,1) modes.
 
-Both tests need the file's own coefficients, so they run on baseline JPEGs
-that the jpegdct module can read. The LSB test is sharp: clean pictures
+Both tests need the file's own coefficients, so they run on the JPEGs that
+the jpegdct module can read, baseline and progressive. The LSB test is sharp: clean pictures
 read 0% throughout and a payload shows block by block. The calibrated
 estimate is a lead rather than a verdict: it reads 10-35% on some phone
 HDR output that holds nothing, and 20-40% on pictures where F5 really
@@ -175,13 +175,19 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> JpegStego:
         return JpegStego(0, 0, 0, 0.0, 0.0, progressive="progressive" in str(exc), error=str(exc))
     except Exception as exc:
         return JpegStego(0, 0, 0, 0.0, 0.0, error=f"cannot read coefficients: {exc}")
+    if jd.luma.bits_missing or jd.luma.unsent:
+        # The lowest bits are what these tests read, and this file never sent them.
+        return JpegStego(0, 0, 0, 0.0, 0.0, progressive=True, structure=jd.notes,
+                         error="the progressive passes stop early, so the lowest bits of the "
+                               "coefficients are not all in the file: " + jd.luma.shortfall)
     stream = _ac_stream(jd)
     probs, embedded, prefix = lsb_attack(stream)
     nonzero = int((stream != 0).sum())
     usable = int(((stream != 0) & (stream != 1)).sum())
     hist = {int(v): int(c) for v, c in zip(*np.unique(stream[np.abs(stream) <= 8], return_counts=True))}
     res = JpegStego(int(jd.luma.coeffs.shape[0] * jd.luma.coeffs.shape[1]), nonzero, usable,
-                    round(embedded, 3), round(prefix, 3), probs, histogram=hist, structure=jd.notes)
+                    round(embedded, 3), round(prefix, 3), probs, histogram=hist, structure=jd.notes,
+                    progressive=jd.progressive)
     cal = None
     if res.blocks >= F5_MIN_BLOCKS:
         try:

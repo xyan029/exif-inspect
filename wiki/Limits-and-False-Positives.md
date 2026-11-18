@@ -11,7 +11,7 @@ What each method needs, what destroys its signal, and what makes it say somethin
 | HDR gain map | iPhone 12 or later, Ultra HDR phones | Any editor that drops it | HDR turned off at capture |
 | ELA | One JPEG history for the whole picture | Many re-saves, very high quality, PNG conversion, screenshots, platform recompression | Hard-edged, saturated objects (a traffic light lit up as much as a pasted building) |
 | JPEG ghosts | An earlier quality lower than the current one, grid-aligned (or `--grid`) | Re-saves through non-libjpeg tables, resizing, cropping off the grid, strong compression | A quality that is an echo of a lower dip (80 after 60; handled) |
-| Double quantisation | A baseline JPEG saved twice on the same grid, the second save finer | The same table twice, a coarser second save, a crop of one pixel or a resize of a few percent between the saves, noise or a filter between them, one more save at the first quality after the paste, progressive files | A picture blurred or sharpened as a whole between the saves, where a region can follow the strong edges (19 of 310 re-saved camera files after such an edit; none in 366 files saved without one) |
+| Double quantisation | A JPEG, baseline or progressive, saved twice on the same grid, the second save finer | The same table twice, a coarser second save, a crop of one pixel or a resize of a few percent between the saves, noise or a filter between them, one more save at the first quality after the paste, a progressive file whose last passes are missing | A picture blurred or sharpened as a whole between the saves, where a region can follow the strong edges (19 of 310 re-saved camera files after such an edit; none in 366 files saved without one) |
 | Copy-move (blocks) | Clone at the same size and angle, not flat | Scaling, rotation, heavy recompression, clones under 16 pixels | Repeating textures: railings, tiles, windows (filtered by shift voting) |
 | Copy-move (keypoints) | Enough keypoints in the clone | Smooth content, clones under about 40 pixels in small pictures | Text, logos and printed patterns, where the same shapes really repeat |
 | Demosaicing traces | A picture that kept its traces: raw conversions, PNG or TIFF, JPEG at 95 or better | Camera and phone pipelines (noise reduction, sharpening, multi-frame), JPEG below about 90, any resizing | A region next to blown-out highlights (one in 89 real files) |
@@ -63,10 +63,13 @@ The reader now follows libjpeg's own rules for all of these, and for damaged dat
 | `component N has more than one scan` | A later scan was laid over an earlier one. No encoder writes this. |
 | `the scan data runs out before the picture is complete` | Truncated or damaged; the missing blocks were left empty, as a viewer shows them. |
 | `N Huffman codes that no table holds` | Damaged data, read as zero the way libjpeg reads it. |
+| `the progressive passes stop early: ...` | A progressive file that ends before its last pass, or whose last pass has a header and no data. It opens everywhere; some coefficients never arrived or lack their lowest bits. `dq` and `stego` skip it. |
+| `after N scans the file breaks the format (...)` | The first scans are sound and something behind them is not. libjpeg refuses the whole file; a viewer that draws pass by pass shows what the first scans brought, and that is what was read. |
+| `no scan carries component N` | The frame header names a component that never arrives. libjpeg shows it as flat grey. |
 
 None of these lines appears for a file straight from a camera or an editor, so each one is worth a second look at who wrote the file.
 
-Still open: progressive and arithmetic-coded JPEGs are skipped with the reason stated, and converting a file to progressive is lossless. A skip of that kind on a file that should be an ordinary camera JPEG is itself a finding.
+Progressive JPEGs are read like baseline ones: on 88 real files rewritten as progressive, `dq` and `stego` print the same result for both forms. Still open: arithmetic-coded JPEGs are skipped with the reason stated, and so is a progressive file whose last pass was dropped, which costs the picture one bit per coefficient. No encoder writes either kind for a photograph, so such a skip on a file that should be an ordinary camera JPEG is itself a finding.
 
 ## Text, names and neighbours written against the tool
 
