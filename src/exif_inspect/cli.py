@@ -4,12 +4,54 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
+import pathlib
 import sys
 from dataclasses import asdict
 
 from . import __version__
 from .checks import run_checks
 from .extract import read_image
+from .textsafe import clean as _t
+
+
+class Path(type(pathlib.Path())):
+    """A path that prints as one safe line (see textsafe); as a file name it is unchanged."""
+
+    def __format__(self, spec: str) -> str:
+        return format(_t(str(self)), spec)
+
+
+def _fresh(out: pathlib.Path) -> pathlib.Path:
+    """The output path, with a symbolic link under that name removed first.
+
+    Output names are made from the input's name, in the input's folder. A link planted there
+    under the name a tool is about to write, pointing at some other file, would have the tool
+    overwrite that file; the link is taken away and a new file written in its place.
+    """
+    try:
+        if out.is_symlink():
+            out.unlink()
+    except OSError:
+        pass
+    return out
+
+
+def _jsonable(value):
+    """The value with what strict JSON cannot carry replaced: non-finite numbers, lone surrogates."""
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError:
+            return value.encode("utf-8", "backslashreplace").decode("utf-8")
+        return value
+    if isinstance(value, dict):
+        return {str(k): _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 # Tags shown in the default (non --all) view.
 KEY_TAGS = {
@@ -23,10 +65,10 @@ KEY_TAGS = {
 
 
 def _print_text(report, findings, show_all: bool) -> None:
-    print(f"== {report.path}")
+    print(f"== {_t(report.path)}")
     print(f"   sha256 : {report.sha256 or '-'}")
     if report.error:
-        print(f"   error  : {report.error}")
+        print(f"   error  : {_t(report.error)}")
     else:
         w, h = report.size or (0, 0)
         print(f"   format : {report.format}  {w}x{h}  {report.mode}")
@@ -108,8 +150,6 @@ def _print_text(report, findings, show_all: bool) -> None:
 
 def ela_main(argv: list[str]) -> int:
     # Imported here so the metadata command stays fast to start.
-    from pathlib import Path
-
     from .ela import run_ela, side_by_side
 
     parser = argparse.ArgumentParser(
@@ -141,12 +181,12 @@ def ela_main(argv: list[str]) -> int:
         try:
             result = run_ela(src, args.quality, args.scale, args.gray)
         except Exception as exc:  # unreadable or not an image
-            print(f"== {src}\n   error  : {exc}\n")
+            print(f"== {src}\n   error  : {_t(exc)}\n")
             exit_code = 1
             continue
 
         out_img = side_by_side(src, result.heatmap) if args.side_by_side else result.heatmap
-        out_path = Path(args.output) if args.output else src.with_name(f"{src.stem}_ela.png")
+        out_path = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_ela.png"))
         out_img.save(out_path)
 
         print(f"== {src}")
@@ -161,8 +201,6 @@ def ela_main(argv: list[str]) -> int:
 
 
 def copymove_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from .copymove import detect, draw
 
     parser = argparse.ArgumentParser(
@@ -192,14 +230,14 @@ def copymove_main(argv: list[str]) -> int:
         try:
             result = detect(src, min_pairs=args.min_pairs)
         except Exception as exc:
-            print(f"== {src}\n   error  : {exc}\n")
+            print(f"== {src}\n   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         print(f"== {src}")
         if not result.clones:
             print("   no copy-move regions found\n")
             continue
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png"))
         draw(src, result).save(out)
         for n, c in enumerate(result.clones, 1):
             print(f"   clone {n}: shift {c.shift}, {c.pairs} matching block pairs")
@@ -209,8 +247,6 @@ def copymove_main(argv: list[str]) -> int:
 
 
 def _keypoints_main(args) -> int:
-    from pathlib import Path
-
     from . import keypoints
 
     if not keypoints.available():
@@ -222,14 +258,14 @@ def _keypoints_main(args) -> int:
         try:
             result = keypoints.detect(src, size=args.size)
         except Exception as exc:
-            print(f"== {src}\n   error  : {exc}\n")
+            print(f"== {src}\n   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         print(f"== {src}")
         if not result.clones:
             print(f"   no copy-move regions found ({result.keypoints} keypoints checked)\n")
             continue
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_copymove.png"))
         keypoints.draw(src, result).save(out)
         for n, c in enumerate(result.clones, 1):
             turn = f", rotated {abs(c.rotation):.0f} degrees" if abs(c.rotation) >= 1 else ""
@@ -240,8 +276,6 @@ def _keypoints_main(args) -> int:
 
 
 def thumbnail_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from .thumbnail import render
 
     parser = argparse.ArgumentParser(
@@ -264,7 +298,7 @@ def thumbnail_main(argv: list[str]) -> int:
         try:
             rendered = render(src)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if rendered is None:
@@ -275,11 +309,11 @@ def thumbnail_main(argv: list[str]) -> int:
         for f in run_checks(report):
             if f.code.startswith("thumbnail"):
                 print(f"   ! {f.message}")
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_thumbnail.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_thumbnail.png"))
         picture.save(out)
         print(f"   output : {out} (thumbnail | main image | difference)")
         if args.extract:
-            raw = src.with_name(f"{src.stem}_thumb.jpg")
+            raw = _fresh(src.with_name(f"{src.stem}_thumb.jpg"))
             raw.write_bytes(data)
             print(f"   thumb  : {raw}")
         print()
@@ -317,25 +351,31 @@ def prnu_main(argv: list[str]) -> int:
         return 2
 
     if args.action == "build":
-        fp = prnu.build(args.images, crop=args.crop)
+        try:
+            fp = prnu.build(args.images, crop=args.crop)
+        except Exception as exc:
+            print(f"   error  : {_t(exc)}")
+            return 1
         fp.save(args.output)
         print(f"fingerprint from {fp.images} of {len(args.images)} images "
               f"({fp.source[0]}x{fp.source[1]}), {fp.crop}x{fp.crop} centre crop -> {args.output}")
         for path, reason in fp.skipped:
-            print(f"   skipped {path}: {reason}")
+            print(f"   skipped {_t(path)}: {_t(reason)}")
         return 0
 
-    fp = prnu.Fingerprint.load(args.fingerprint)
+    try:
+        fp = prnu.Fingerprint.load(args.fingerprint)
+    except Exception as exc:
+        print(f"   error  : {_t(args.fingerprint)} is not a fingerprint file from 'prnu build' ({_t(exc)})")
+        return 1
     if args.action == "locate":
-        from pathlib import Path
-
         src = Path(args.image)
         try:
             res = prnu.locate(fp, src, block=args.block)
         except Exception as exc:
-            print(f"== {src}\n   error  : {exc}")
+            print(f"== {src}\n   error  : {_t(exc)}")
             return 1
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_prnu.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_prnu.png"))
         prnu.render_locate(src, res).save(out)
         print(f"== {src}")
         print(f"   PCE {res.pce:.1f} over the whole crop, {res.block}-pixel blocks")
@@ -355,7 +395,7 @@ def prnu_main(argv: list[str]) -> int:
         try:
             result = prnu.match(fp, image)
         except Exception as exc:
-            print(f"== {image}\n   error  : {exc}")
+            print(f"== {_t(image)}\n   error  : {_t(exc)}")
             exit_code = 1
             continue
         if result.pce >= prnu.PCE_THRESHOLD:
@@ -365,13 +405,11 @@ def prnu_main(argv: list[str]) -> int:
         else:
             verdict = "no evidence of the same camera"
         turn = f", image turned {result.rotation} degrees" if result.rotation else ""
-        print(f"== {image}\n   PCE {result.pce:.1f}{turn}: {verdict}")
+        print(f"== {_t(image)}\n   PCE {result.pce:.1f}{turn}: {verdict}")
     return exit_code
 
 
 def ghost_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import ghost
 
     parser = argparse.ArgumentParser(
@@ -403,7 +441,7 @@ def ghost_main(argv: list[str]) -> int:
         try:
             res = ghost.analyze(src, block=args.block, grid=args.grid)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if res.current_quality is None:
@@ -426,7 +464,7 @@ def ghost_main(argv: list[str]) -> int:
             off = f", grid offset {res.shift}" if res.shift != (0, 0) else ""
             print(f"   ! ghost at quality {res.ghost_quality} in {where}{off}: that area came "
                   f"from a JPEG saved at about quality {res.ghost_quality}")
-            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_ghost.png")
+            out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_ghost.png"))
             ghost.render(res).save(out)
             print(f"   output : {out} (cyan = ghost region)")
         elif not res.global_ghosts:
@@ -438,8 +476,6 @@ def ghost_main(argv: list[str]) -> int:
 
 
 def light_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import lighting
 
     parser = argparse.ArgumentParser(
@@ -471,7 +507,7 @@ def light_main(argv: list[str]) -> int:
         try:
             res = lighting.analyze(src, boxes or None)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if boxes:
@@ -504,7 +540,7 @@ def light_main(argv: list[str]) -> int:
         elif len(res.contours) > 1:
             print("   outlines disagree with each other; no common direction. Pick the objects "
                   "to compare with --box")
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_light.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_light.png"))
         lighting.render(res).save(out)
         print(f"   output : {out} (arrows point toward the light; red = disagrees, "
               "yellow = common direction)\n")
@@ -512,8 +548,6 @@ def light_main(argv: list[str]) -> int:
 
 
 def cfa_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import cfa
 
     parser = argparse.ArgumentParser(
@@ -540,7 +574,7 @@ def cfa_main(argv: list[str]) -> int:
         try:
             res = cfa.analyze(src, block=args.block)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if res.trace == "none":
@@ -557,7 +591,7 @@ def cfa_main(argv: list[str]) -> int:
             print(f"   ! trace missing around {res.box} ({res.flagged_fraction:.0%} of checkable "
                   "blocks): that area was pasted, resized, shifted or generated after the "
                   "rest was demosaiced")
-            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_cfa.png")
+            out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_cfa.png"))
             cfa.render(res).save(out)
             print(f"   output : {out} (red = trace missing, dimmed = cannot judge, "
                   "white frame = area analysed)")
@@ -568,8 +602,6 @@ def cfa_main(argv: list[str]) -> int:
 
 
 def noise_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import noise
 
     parser = argparse.ArgumentParser(
@@ -596,7 +628,7 @@ def noise_main(argv: list[str]) -> int:
         try:
             res = noise.analyze(src, block=args.block)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if res.judged_fraction == 0:
@@ -611,7 +643,7 @@ def noise_main(argv: list[str]) -> int:
                     else "has less noise than areas like it")
             print(f"   ! region around {res.box} {what} ({res.ratio:.2f} times the expected "
                   f"level): it may have been pasted in, smoothed, painted or filled")
-            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_noise.png")
+            out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_noise.png"))
             noise.render(res).save(out)
             print(f"   output : {out} (red = noisier, blue = smoother, dimmed = cannot judge)")
         else:
@@ -621,8 +653,6 @@ def noise_main(argv: list[str]) -> int:
 
 
 def resample_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import resample
 
     parser = argparse.ArgumentParser(
@@ -645,7 +675,7 @@ def resample_main(argv: list[str]) -> int:
         try:
             res = resample.analyze(src)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if res.judged_fraction == 0:
@@ -690,7 +720,7 @@ def resample_main(argv: list[str]) -> int:
             width, factor = res.stretched
             print(f"   ! the peaks form a comb: 8-pixel JPEG blocks now {width:.1f} pixels wide, "
                   f"so the picture was resized {factor:.2f}x after a JPEG save")
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_resample.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_resample.png"))
         resample.render(res).save(out)
         print(f"   output : {out} (red = carries the trace, dimmed = cannot judge, "
               "white frame = area analysed)")
@@ -699,8 +729,6 @@ def resample_main(argv: list[str]) -> int:
 
 
 def dq_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import dq
 
     parser = argparse.ArgumentParser(
@@ -723,12 +751,14 @@ def dq_main(argv: list[str]) -> int:
         try:
             res = dq.analyze(src)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         if res.verdict == "skipped":
             print(f"   skipped : {res.note}\n")
             continue
+        if res.structure:
+            print("   structure : " + "; ".join(res.structure))
         if res.covered < 1:
             print(f"   analysed the top {res.covered:.0%} of the picture ({dq.MAX_BLOCKS} blocks)")
         if res.verdict == "none":
@@ -754,7 +784,7 @@ def dq_main(argv: list[str]) -> int:
             print(f"   ! region around {res.box} was compressed only once "
                   f"({res.single_fraction:.1%} of checkable blocks read that way): pasted, "
                   "painted or filled in after the first save")
-            out = Path(args.output) if args.output else src.with_name(f"{src.stem}_dq.png")
+            out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_dq.png"))
             dq.render(res).save(out)
             print(f"   output : {out} (red = compressed once, dimmed = cannot judge)")
         elif res.smeared:
@@ -768,8 +798,6 @@ def dq_main(argv: list[str]) -> int:
 
 
 def xmp_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     parser = argparse.ArgumentParser(
         prog="exif-inspect xmp",
         description="Show the XMP packet of each image: creator tool, dates, document IDs, "
@@ -785,14 +813,15 @@ def xmp_main(argv: list[str]) -> int:
         print(f"== {src}")
         report = read_image(src)
         if report.error:
-            print(f"   error  : {report.error}\n")
+            print(f"   error  : {_t(report.error)}\n")
             exit_code = 1
             continue
         x = report.xmp
         if not x.present:
             print("   no XMP packet\n")
             continue
-        print(f"   packet : {x.size} bytes in {x.container}; namespaces {', '.join(x.namespaces)}")
+        more = f" (the first of {x.packets} packets)" if x.packets > 1 else ""
+        print(f"   packet : {x.size} bytes in {x.container}{more}; namespaces {', '.join(x.namespaces)}")
         for label, value in (("creator tool", x.creator_tool), ("create date", x.create_date),
                              ("modify date", x.modify_date), ("metadata date", x.metadata_date),
                              ("document id", x.document_id),
@@ -833,14 +862,13 @@ def xmp_main(argv: list[str]) -> int:
                 print(f"   {'!' if f.level == 'flag' else '-'} {f.message}")
         if args.raw:
             print("   --- packet ---")
-            print(x.raw.strip())
+            for line in x.raw.strip().splitlines():
+                print("   | " + _t(line, 100_000))
         print()
     return exit_code
 
 
 def report_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import report as report_mod
 
     parser = argparse.ArgumentParser(
@@ -868,7 +896,7 @@ def report_main(argv: list[str]) -> int:
     for image in args.images:
         src = Path(image)
         built = report_mod.build(src, tools, grid=args.grid)
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_report.html")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_report.html"))
         out.write_text(built.html, encoding="utf-8")
         failed = [s.title for s in built.sections if s.failed]
         print(f"== {src}")
@@ -884,8 +912,6 @@ def report_main(argv: list[str]) -> int:
 
 
 def stego_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import hidden
 
     parser = argparse.ArgumentParser(
@@ -910,7 +936,7 @@ def stego_main(argv: list[str]) -> int:
         print(f"== {src}")
         report = read_image(src)
         if report.error:
-            print(f"   error  : {report.error}\n")
+            print(f"   error  : {_t(report.error)}\n")
             exit_code = 1
             continue
         t = report.trailer
@@ -921,7 +947,7 @@ def stego_main(argv: list[str]) -> int:
             print(f"   {mark} trailer : {t.size} bytes after the image at offset {t.offset}, "
                   f"{t.kind}; starts {t.sample!r}")
             if args.extract and not t.expected:
-                out = src.with_name(f"{src.stem}_trailer.bin")
+                out = _fresh(src.with_name(f"{src.stem}_trailer.bin"))
                 out.write_bytes(src.read_bytes()[t.offset:])
                 print(f"   saved   : {out}")
         if report.format in ("JPEG", "MPO"):
@@ -932,6 +958,8 @@ def stego_main(argv: list[str]) -> int:
                 print(f"   coeffs    : {res.error}; the lowest-bit tests need pixel samples, "
                       "which a JPEG does not store\n")
                 continue
+            if res.structure:
+                print("   structure : " + "; ".join(res.structure))
             print(f"   coeffs    : {res.blocks} luma blocks read, {res.nonzero_ac} non-zero AC "
                   f"coefficients, {res.usable} usable for JSteg")
             print(f"   lsb pairs : {res.lsb_embedded:.0%} of the coefficient stream reads as "
@@ -944,7 +972,7 @@ def stego_main(argv: list[str]) -> int:
         try:
             res = hidden.analyze_lsb(src)
         except Exception as exc:
-            print(f"   error  : {exc}\n")
+            print(f"   error  : {_t(exc)}\n")
             exit_code = 1
             continue
         print(f"   lsb     : {res.channels} channel(s), {res.samples} samples; ones {res.lsb_mean:.1%}, "
@@ -957,15 +985,13 @@ def stego_main(argv: list[str]) -> int:
               f"{prefix:.0%} in one run")
         verdict = hidden.verdict(res)
         print(f"   {'!' if verdict.flag else '-'} {verdict.message}")
-        out = Path(args.output) if args.output else src.with_name(f"{src.stem}_lsb.png")
+        out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_lsb.png"))
         res.planes.save(out)
         print(f"   output  : {out} (lowest bit of each channel, white = 1)\n")
     return exit_code
 
 
 def compare_main(argv: list[str]) -> int:
-    from pathlib import Path
-
     from . import compare as cmp
 
     parser = argparse.ArgumentParser(
@@ -982,7 +1008,7 @@ def compare_main(argv: list[str]) -> int:
     try:
         res = cmp.compare(a, b)
     except Exception as exc:
-        print(f"   error  : {exc}\n")
+        print(f"   error  : {_t(exc)}\n")
         return 1
     for key, va, vb in res.metadata:
         mark = " " if va == vb else "*"
@@ -1015,7 +1041,7 @@ def compare_main(argv: list[str]) -> int:
         print(f"   parent : {res.parent.upper()} came first: {'; '.join(res.reasons)}")
     else:
         print(f"   parent : undecided: {'; '.join(res.reasons)}")
-    out = Path(args.output) if args.output else a.with_name(f"{a.stem}_vs_{b.stem}.png")
+    out = _fresh(Path(args.output) if args.output else a.with_name(f"{a.stem}_vs_{b.stem}.png"))
     res.picture.save(out)
     print(f"   output : {out} (container with the other's frame in cyan and changes in orange, "
           "the other picture, the difference)\n")
@@ -1049,7 +1075,7 @@ def dupes_main(argv: list[str]) -> int:
                                            if k not in ("phash", "dhash")},
                                         "distance": g.distances[m.path]} for m in g.members]}
                           for g in res.groups]}
-        json.dump(out, sys.stdout, indent=2, default=str)
+        json.dump(_jsonable(out), sys.stdout, indent=2, default=str, allow_nan=False)
         print()
         return 0
     print(f"scanned {res.scanned} file(s): {len(res.groups)} group(s) of duplicates, "
@@ -1063,11 +1089,11 @@ def dupes_main(argv: list[str]) -> int:
             q = f"q{m.quality}" if m.quality else "-"
             turn = f", turned {rot}" if rot else ""
             same = "same bytes" if m.sha256 == g.best.sha256 and m is not g.best else f"distance {dp}/{dd}{turn}"
-            print(f"   {star} {m.path}")
+            print(f"   {star} {_t(m.path)}")
             print(f"       {m.fmt} {m.size[0]}x{m.size[1]}, {q}, {m.tags} EXIF tags, "
                   f"{m.bytes // 1024} KB; {same if m is not g.best else 'likely original'}")
     for path, err in res.unreadable:
-        print(f"\n   unreadable {path}: {err}")
+        print(f"\n   unreadable {_t(path)}: {_t(err)}")
     return 0
 
 
@@ -1139,7 +1165,8 @@ def main(argv: list[str] | None = None) -> int:
             _print_text(report, findings, args.all)
 
     if args.json:
-        json.dump(results, sys.stdout, indent=2, ensure_ascii=False, default=str)
+        json.dump(_jsonable(results), sys.stdout, indent=2, ensure_ascii=False, default=str,
+                  allow_nan=False)
         print()
     return exit_code
 

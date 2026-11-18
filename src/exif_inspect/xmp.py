@@ -19,13 +19,19 @@ usual namespace prefixes.
 
 from __future__ import annotations
 
+import math
 import re
 import struct
 import xml.etree.ElementTree as ET
+import zlib
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import jpegdct
+from .textsafe import clean
+
 MAX_PACKET = 8 << 20     # bytes of XMP we are willing to parse
+MAX_DEPTH = 32           # levels of nested structures followed; real packets use under ten
 
 _XMP_HEADER = b"http://ns.adobe.com/xap/1.0/\x00"
 _EXT_HEADER = b"http://ns.adobe.com/xmp/extension/\x00"
@@ -107,53 +113,55 @@ class XmpInfo:
     rights: str | None = None
     ai_marker: str | None = None
     namespaces: list[str] = field(default_factory=list)
+    packets: int = 1                                    # XMP packets in the file; one is normal
+    other_tools: list[str] = field(default_factory=list)   # software named by the packets after the first
     raw: str = field(default="", repr=False, compare=False)
 
 
 # --- finding the packet --------------------------------------------------
 
 def _jpeg_segments(data: bytes):
-    i = 2
-    while i + 4 <= len(data):
-        if data[i] != 0xFF:
-            break
-        marker = data[i + 1]
-        if marker == 0xDA:
-            break
-        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
-            i += 2
-            continue
-        length, = struct.unpack(">H", data[i + 2:i + 4])
-        yield marker, data[i + 4:i + 2 + length]
-        i += 2 + length
+    for _, marker, payload in jpegdct.walk(data).segments:
+        if marker != 0xDA:
+            yield marker, payload
 
 
-def _from_jpeg(data: bytes) -> tuple[bytes | None, str | None]:
-    main = None
+def _from_jpeg(data: bytes) -> list[tuple[bytes, str]]:
+    mains: list[bytes] = []
     parts: dict[str, list[tuple[int, bytes]]] = {}
     for marker, seg in _jpeg_segments(data):
         if marker != 0xE1:
             continue
         if seg.startswith(_XMP_HEADER):
-            main = seg[len(_XMP_HEADER):]
+            mains.append(seg[len(_XMP_HEADER):])
         elif seg.startswith(_EXT_HEADER) and len(seg) >= len(_EXT_HEADER) + 40:
             body = seg[len(_EXT_HEADER):]
             guid = body[:32].decode("ascii", "replace")
             offset, = struct.unpack(">I", body[36:40])
             parts.setdefault(guid, []).append((offset, body[40:]))
-    if main is None:
-        return None, None
-    if parts:
-        # The main packet names the GUID of its continuation; stitch it on.
+    out = []
+    for n, main in enumerate(mains):
+        # A packet names the GUID of its continuation; stitch it on.
         match = re.search(rb'xmpNote:HasExtendedXMP="([0-9A-Fa-f]{32})"', main)
-        guid = match.group(1).decode() if match else next(iter(parts))
+        guid = match.group(1).decode() if match else (next(iter(parts)) if parts and n == 0 else None)
         if guid in parts:
             extra = b"".join(chunk for _, chunk in sorted(parts[guid]))
-            return main + extra, "JPEG APP1 segments (extended)"
-    return main, "JPEG APP1 segment"
+            out.append((main + extra, "JPEG APP1 segments (extended)"))
+        else:
+            out.append((main, "JPEG APP1 segment"))
+    return out
 
 
-def _from_png(data: bytes) -> bytes | None:
+def _inflate(blob: bytes, limit: int = MAX_PACKET) -> bytes | None:
+    """A zlib stream expanded up to the limit; None when it is damaged."""
+    try:
+        return zlib.decompressobj().decompress(blob, limit)
+    except zlib.error:
+        return None
+
+
+def _from_png(data: bytes) -> list[bytes]:
+    out = []
     i = 8
     while i + 8 <= len(data):
         length, = struct.unpack(">I", data[i:i + 4])
@@ -163,51 +171,57 @@ def _from_png(data: bytes) -> bytes | None:
             if chunk.startswith(b"XML:com.adobe.xmp\x00"):
                 rest = chunk[len(b"XML:com.adobe.xmp\x00"):]
                 # compression flag, method, language tag, translated keyword
-                if len(rest) >= 2 and rest[0] == 0:
-                    rest = rest[2:]
-                    rest = rest.split(b"\x00", 2)
-                    if len(rest) == 3:
-                        return rest[2]
+                if len(rest) >= 2:
+                    packed = rest[0] == 1
+                    fields = rest[2:].split(b"\x00", 2)
+                    if len(fields) == 3:
+                        text = _inflate(fields[2]) if packed else fields[2]
+                        if text is not None:
+                            out.append(text)
         if ctype == b"IEND":
             break
         i += 12 + length
-    return None
+    return out
 
 
-def _from_webp(data: bytes) -> bytes | None:
+def _from_webp(data: bytes) -> list[bytes]:
+    out = []
     i = 12
     while i + 8 <= len(data):
         fourcc = data[i:i + 4]
         size, = struct.unpack("<I", data[i + 4:i + 8])
         if fourcc == b"XMP ":
-            return data[i + 8:i + 8 + size]
+            out.append(data[i + 8:i + 8 + size])
         i += 8 + size + (size & 1)
-    return None
+    return out
 
 
-def find_packet(data: bytes, fmt: str | None, info: dict | None = None) -> tuple[bytes | None, str | None]:
-    """The raw XMP bytes and where they were found, or (None, None)."""
+def find_packets(data: bytes, fmt: str | None, info: dict | None = None) -> list[tuple[bytes, str]]:
+    """Every XMP packet in the file, in file order, each with where it was found."""
+    found: list[tuple[bytes, str]] = []
     if fmt in ("JPEG", "MPO"):
-        packet, where = _from_jpeg(data)
-        if packet is not None:
-            return packet, where
+        found = _from_jpeg(data)
     elif fmt == "PNG":
-        packet = _from_png(data)
-        if packet is not None:
-            return packet, "PNG iTXt chunk"
+        found = [(packet, "PNG iTXt chunk") for packet in _from_png(data)]
     elif fmt == "WEBP":
-        packet = _from_webp(data)
-        if packet is not None:
-            return packet, "WebP XMP chunk"
+        found = [(packet, "WebP XMP chunk") for packet in _from_webp(data)]
+    if found:
+        return found
     if info and info.get("xmp"):
         packet = info["xmp"]
-        return (packet if isinstance(packet, bytes) else str(packet).encode()), f"{fmt} metadata"
+        return [((packet if isinstance(packet, bytes) else str(packet).encode()), f"{fmt} metadata")]
     start = data.find(b"<x:xmpmeta")
     if start != -1:
         end = data.find(b"</x:xmpmeta>", start)
         if end != -1:
-            return data[start:end + len(b"</x:xmpmeta>")], "embedded packet"
-    return None, None
+            return [(data[start:end + len(b"</x:xmpmeta>")], "embedded packet")]
+    return []
+
+
+def find_packet(data: bytes, fmt: str | None, info: dict | None = None) -> tuple[bytes | None, str | None]:
+    """The first XMP packet and where it was found, or (None, None)."""
+    found = find_packets(data, fmt, info)
+    return found[0] if found else (None, None)
 
 
 # --- parsing ----------------------------------------------------------------
@@ -222,35 +236,39 @@ def _prefix(tag: str) -> str:
     return tag
 
 
-def _value(elem: ET.Element) -> Any:
+def _value(elem: ET.Element, depth: int = 0) -> Any:
     """A property element's value: text, a list, or a dict for a struct."""
+    if depth > MAX_DEPTH:
+        return ""                         # deeper than any real packet goes; the rest is left unread
     children = list(elem)
     if not children:
         if any(not k.startswith(_RDF) and not k.startswith(_XML) for k in elem.attrib):
-            return _struct(elem)          # a struct written as attributes
+            return _struct(elem, depth + 1)          # a struct written as attributes
         if elem.get(f"{_RDF}resource"):
             return elem.get(f"{_RDF}resource")
         return (elem.text or "").strip()
     first = children[0]
     if first.tag in (f"{_RDF}Seq", f"{_RDF}Bag", f"{_RDF}Alt"):
-        return [_value(li) for li in first if li.tag == f"{_RDF}li"]
+        return [_value(li, depth + 1) for li in first if li.tag == f"{_RDF}li"]
     if first.tag == f"{_RDF}Description":
-        return _struct(first)
-    return _struct(elem)
+        return _struct(first, depth + 1)
+    return _struct(elem, depth + 1)
 
 
-def _struct(elem: ET.Element) -> dict[str, Any]:
+def _struct(elem: ET.Element, depth: int = 0) -> dict[str, Any]:
     out: dict[str, Any] = {}
+    if depth > MAX_DEPTH:
+        return out
     for key, val in elem.attrib.items():
         if not key.startswith(_RDF) and not key.startswith(_XML):
             out[_prefix(key)] = val
     for child in elem:
         if child.tag == f"{_RDF}Description":
-            out.update(_struct(child))
+            out.update(_struct(child, depth + 1))
         elif child.tag.startswith(_RDF):
             continue
         else:
-            out[_prefix(child.tag)] = _value(child)
+            out[_prefix(child.tag)] = _value(child, depth + 1)
     return out
 
 
@@ -260,6 +278,9 @@ def flatten(packet: bytes) -> dict[str, Any]:
     # Padding and xpacket processing instructions are fine for the parser;
     # stray NULs and a UTF-8 byte-order mark are not.
     text = text.replace(b"\x00", b"").lstrip(b"\xef\xbb\xbf")
+    if b"<!ENTITY" in text:
+        # XMP declares no entities; a packet that does is built to make the parser expand them.
+        raise ET.ParseError("entity declarations in an XMP packet")
     return _top_level(ET.fromstring(text))
 
 
@@ -284,7 +305,7 @@ def _text(value: Any) -> str | None:
     if isinstance(value, dict):
         return None
     text = str(value).strip()
-    return text or None
+    return clean(text) if text else None
 
 
 def _bool(value: Any) -> bool | None:
@@ -306,7 +327,7 @@ def parse(packet: bytes, container: str | None = None) -> XmpInfo:
         props = flatten(packet)
     except ET.ParseError:
         return info
-    info.namespaces = sorted({k.split(":", 1)[0] for k in props})
+    info.namespaces = sorted({clean(k.split(":", 1)[0], 80) for k in props})
     info.creator_tool = _text(props.get("xmp:CreatorTool"))
     info.create_date = _text(props.get("xmp:CreateDate"))
     info.modify_date = _text(props.get("xmp:ModifyDate"))
@@ -343,7 +364,7 @@ def parse(packet: bytes, container: str | None = None) -> XmpInfo:
     info.has_crop = _bool(props.get("crs:HasCrop"))
     try:
         edges = [float(_text(props[f"crs:Crop{side}"])) for side in ("Left", "Top", "Right", "Bottom")]
-        if info.has_crop:
+        if info.has_crop and all(math.isfinite(v) for v in edges):
             info.crop = tuple(round(v, 4) for v in edges)
     except (KeyError, TypeError, ValueError):
         pass
@@ -375,8 +396,23 @@ def parse(packet: bytes, container: str | None = None) -> XmpInfo:
 
 
 def read(data: bytes, fmt: str | None, info: dict | None = None) -> XmpInfo:
-    """Find and parse the XMP packet of a file; an empty XmpInfo when there is none."""
-    packet, where = find_packet(data, fmt, info)
-    if packet is None:
+    """Find and parse the XMP of a file; an empty XmpInfo when there is none.
+
+    A file should carry one packet. When it carries more, readers differ on which they show
+    (Pillow takes the last, ImageMagick joins them), so the first is parsed in full and the
+    software the others name is kept beside it: an editor cannot be hidden behind a second,
+    clean packet.
+    """
+    found = find_packets(data, fmt, info)
+    if not found:
         return XmpInfo()
-    return parse(packet, where)
+    first = parse(*found[0])
+    first.packets = len(found)
+    for packet, where in found[1:]:
+        other = parse(packet, where)
+        for agent in other.agents:
+            if agent not in first.other_tools:
+                first.other_tools.append(agent)
+        if first.ai_marker is None:
+            first.ai_marker = other.ai_marker
+    return first

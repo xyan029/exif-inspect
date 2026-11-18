@@ -14,6 +14,8 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+from . import jpegdct
+
 # IPTC digital source type codes, most specific first.
 _SOURCE_TYPES = (
     (b"compositewithtrainedalgorithmicmedia", "compositeWithTrainedAlgorithmicMedia"),
@@ -47,22 +49,8 @@ def _png_has_cabx(data: bytes) -> bool:
 
 
 def _jpeg_has_app11_jumbf(data: bytes) -> bool:
-    i = 2  # skip SOI
-    while i + 4 <= len(data):
-        if data[i] != 0xFF:
-            break
-        marker = data[i + 1]
-        if marker == 0xDA:          # start of scan: metadata segments are over
-            break
-        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
-            i += 2
-            continue
-        length, = struct.unpack(">H", data[i + 2:i + 4])
-        segment = data[i + 4:i + 2 + length]
-        if marker == 0xEB and (b"jumb" in segment or b"c2pa" in segment):
-            return True
-        i += 2 + length
-    return False
+    return any(marker == 0xEB and (b"jumb" in segment or b"c2pa" in segment)
+               for _, marker, segment in jpegdct.walk(data).segments)
 
 
 def _webp_has_c2pa(data: bytes) -> bool:

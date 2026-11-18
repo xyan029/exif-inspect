@@ -10,7 +10,7 @@ Three places to hide things in an image file.
 
 ## After the picture
 
-Every viewer stops reading a JPEG at its EOI marker, a PNG at its IEND chunk, a WebP at the end of its RIFF container and a GIF at its trailer byte. Whatever follows rides along unseen: an archive, a second image, a text file. The main report checks every file (`trailing_data`), says how many bytes follow and what they look like (ZIP and other archives, another image, PDF, executables, XML, plain text), and `stego --extract` saves them for a closer look. A second JPEG that an MPF segment announces, such as an iPhone's gain map, is reported as expected (`trailing_image`) rather than flagged.
+Every viewer stops reading a JPEG at its EOI marker, a PNG at its IEND chunk, a WebP at the end of its last chunk and a GIF at its trailer block. The GIF's end is found by following its blocks, so appended data that itself ends in `;` is still seen, and a WebP header whose size field was raised to cover appended bytes is not taken at its word. Whatever follows rides along unseen: an archive, a second image, a text file. The main report checks every file (`trailing_data`), says how many bytes follow and what they look like (ZIP and other archives, another image, PDF, executables, XML, plain text), and `stego --extract` saves them for a closer look. A second JPEG that an MPF segment announces, such as an iPhone's gain map, is reported as expected (`trailing_image`) rather than flagged.
 
 A trailer is not subtle once you look for it, which is why it works: nobody looks. A ZIP appended to a JPEG opens as a picture in a viewer and as an archive in an unzip tool, and survives any copy that does not re-encode the file. Re-encoding by a platform or a messaging app removes it.
 
@@ -33,7 +33,7 @@ Replacing the least significant bit of each sample changes the picture by at mos
 
 ## In the JPEG coefficients
 
-A JPEG stores no pixels. It stores the quantised DCT coefficients of each 8x8 block, and JPEG steganography writes into those. The tool reads them with its own baseline decoder, exactly as the file holds them (Pillow only hands out pixels), and runs two tests on the luma AC coefficients. Progressive and arithmetic-coded files are not read; the subcommand says so.
+A JPEG stores no pixels. It stores the quantised DCT coefficients of each 8x8 block, and JPEG steganography writes into those. The tool reads them with its own baseline decoder, exactly as the file holds them (Pillow only hands out pixels), and runs two tests on the luma AC coefficients. Progressive and arithmetic-coded files are not read; the subcommand says so. The decoder follows libjpeg's rules for fill bytes, missing tables, several scans and damaged data, so that it reads the picture a viewer shows, and a `structure :` line lists whatever it had to pass over (see [[Limits and False Positives]]).
 
 **JSteg-style LSB replacement.** JSteg, early OutGuess and most homemade tools flip the lowest bit of coefficients other than 0 and 1. A clean picture has far more 2s than 3s and far more -2s than -1s, because the coefficient histogram falls off steeply from zero. Writing random bits evens each pair out. Westfeld's chi-square test runs over blocks of 10 000 coefficients in scan order and reports two shares of the stream: how much reads as evened out, and how much of that sits in one run from the start, which is where a payload written from the top of the picture lands. Clean pictures read 0% throughout, so from 10% up the file is flagged, and the prefix tells you roughly how long the message is.
 

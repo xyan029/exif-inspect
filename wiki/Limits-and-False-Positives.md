@@ -46,3 +46,40 @@ Before writing "no sign of editing", check:
 2. What are the JPEG tables? Standard tables at 75 or 76 after a known camera mean a platform re-encoded it; ELA, ghost, CFA and faint noise differences were weakened or erased.
 3. Was it resized? `dimension_mismatch`, `gain_map_misfit` or a size that is not the camera's say yes; PRNU and CFA are then gone. `resample` can confirm it on a lossless file.
 4. Is the questioned region smooth? Copy-move, noise and lighting cannot judge flat areas, and CFA and PRNU mark them "cannot judge".
+
+## Files written against the tool
+
+The checks above assume the tool reads the file the way a viewer does. A file can be written so that it does otherwise, which defeats every check at once. Before the parser audit, one legal fill byte in front of a marker made `dq` and `stego` stop with an error and made the trailer check report nothing while a ZIP sat behind the picture. Leaving out the Huffman tables, spreading the components over several scans, or giving all components one id had the same effect on `dq`, and in a small file the last of these returned wrong coefficients without an error.
+
+The reader now follows libjpeg's own rules for all of these, and for damaged data as well, and prints what it passed over:
+
+| `structure :` line | Meaning |
+|---|---|
+| `N fill bytes in front of a marker` | Legal padding that encoders do not write. |
+| `N stray bytes between segments` | Bytes that belong to no segment. libjpeg skips them with a warning. |
+| `a Huffman table the scan needs is not in the file` | The standard table was assumed, as libjpeg does. Usual in frames cut from MJPEG video, unusual in a photograph. |
+| `the components come in N scans` | Baseline, with one scan per component or group. Legal and rare. |
+| `components share an id` | The frame header names two components alike. |
+| `component N has more than one scan` | A later scan was laid over an earlier one. No encoder writes this. |
+| `the scan data runs out before the picture is complete` | Truncated or damaged; the missing blocks were left empty, as a viewer shows them. |
+| `N Huffman codes that no table holds` | Damaged data, read as zero the way libjpeg reads it. |
+
+None of these lines appears for a file straight from a camera or an editor, so each one is worth a second look at who wrote the file.
+
+Still open: progressive and arithmetic-coded JPEGs are skipped with the reason stated, and converting a file to progressive is lossless. A skip of that kind on a file that should be an ordinary camera JPEG is itself a finding.
+
+## Text, names and neighbours written against the tool
+
+A file's author also chooses its metadata values, its name and, in a folder handed over as evidence, what lies next to it. What the tool does with each:
+
+| The file carries | The tool |
+|---|---|
+| line breaks, escape sequences or bidirectional overrides in a tag, an XMP field or its name | prints them as `\n`, `\x1b`, `\u202e`; a value can no longer add lines that look like findings or erase lines above it |
+| a number that is not finite, a date past year 9999, a string of hundreds of digits where a number belongs | leaves the check that needed it without a result; `--json` prints `null` |
+| more than one XMP packet | shows the first, flags `xmp_multiple`, and flags an editor named in any of them |
+| a PNG ancillary chunk with a wrong checksum or length, or text that expands past 1 MB | opens the picture as libpng viewers do and flags `png_faulty_chunks` |
+| a GIF with appended data ending in `;`, a WebP whose header size covers appended bytes | reports the trailer |
+
+And for the folder: a named pipe, a device or a directory under a picture's name is refused at once, a dangling link is listed as unreadable, and an output name that already exists as a symbolic link is replaced by a new file, so a planted link cannot point the tool's output at another file.
+
+Still open: data hidden inside a container (a private PNG chunk in front of IEND, a JPEG comment segment) is not reported, pictures past Pillow's limit of about 179 megapixels are refused, and HEIC files were not part of the audit.

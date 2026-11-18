@@ -32,6 +32,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 BLOCK = 32              # analysis block in pixels
 PATCH = 5               # patch side for the covariance estimate
 MIN_PATCHES = 150       # weak-texture patches a block needs for an estimate
@@ -201,12 +203,14 @@ def _largest_component(mask: np.ndarray) -> np.ndarray:
 
 def analyze(path: str | Path, block: int = BLOCK) -> NoiseResult:
     """Map the noise level and find regions whose noise does not fit the picture."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         rgb = np.asarray(img.convert("RGB"))
     h, w = rgb.shape[:2]
     oy, ox = max(0, (h - MAX_SIDE) // 2), max(0, (w - MAX_SIDE) // 2)
     crop = rgb[oy:oy + MAX_SIDE, ox:ox + MAX_SIDE]
     gray = np.asarray(Image.fromarray(crop).convert("L"), dtype=np.float32)
+    if min(gray.shape) < block:
+        raise ValueError(f"picture smaller than one {block}-pixel block on a side")
     sigma, share, bright, texture = block_sigma(gray, block)
     usable = (share >= MIN_FLAT) & (sigma > 0) & (bright > 8) & (bright < 247)
 

@@ -15,6 +15,7 @@ Every code the main report (`exif-inspect photo.jpg`) can print, grouped by what
 | `makernote_missing` | EXIF names a camera but has no MakerNote | Cameras and phones always write one; it is dropped by most editors and never added by hand |
 | `dimension_mismatch` | EXIF width and height differ from the real size | Cropped or resized after capture; rotation is accounted for |
 | `trailing_data` | Bytes follow the end of the picture | Something appended: the kind (archive, image, text) and a preview are shown; `stego --extract` saves it |
+| `png_faulty_chunks` | A PNG ancillary chunk has a wrong checksum or length, or its text expands past 1 MB | Written by faulty software or changed after the file was made; viewers built on libpng show the picture, stricter readers refuse the file |
 | `trailing_image` | A second JPEG after the first, announced by an MPF segment | A gain map or extra frame, as iPhones write |
 
 ## Times and places
@@ -62,6 +63,7 @@ These labels disappear on a screenshot and on most platforms, so their absence m
 | Code | Triggered when | Read it as |
 |---|---|---|
 | `xmp_editor` | Creator tool or a history agent names an editor | As `editor_software`, from the other metadata block |
+| `xmp_multiple` | The file holds more than one XMP packet | A file should hold one. Readers differ on which they show, so a clean packet may have been added to cover another; the first is shown and the software the others name is listed |
 | `xmp_history` | `xmpMM:History` has events | Each save with software and time, oldest first; Photoshop and Lightroom write one per save |
 | `xmp_derived` | `DerivedFrom` present, or document ID differs from the original document ID | Made from another document, whose ID is shown |
 | `xmp_raw` | `crs:RawFileName` present | Developed from a raw file; the main sliders are listed |

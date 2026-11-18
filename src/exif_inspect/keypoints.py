@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 try:
     import cv2
 except ImportError:  # pragma: no cover - exercised only without OpenCV
@@ -79,7 +81,7 @@ def detect(
     if cv2 is None:
         raise RuntimeError('keypoint mode needs OpenCV: pip install "exif-inspect[keypoints]"')
 
-    with Image.open(path) as img:
+    with opened(path) as img:
         grey = img.convert("L")
     # By default work at twice the original size, kept between 1000 and 2400
     # pixels on the longest side: enlarging lets a small, shrunken clone
@@ -225,7 +227,7 @@ def detect(
 
 def draw(path: str | Path, result: KeypointResult) -> Image.Image:
     """Original image with region A in orange, region B in cyan and match lines."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         out = img.convert("RGB")
     d = ImageDraw.Draw(out)
     width = max(2, out.width // 300)

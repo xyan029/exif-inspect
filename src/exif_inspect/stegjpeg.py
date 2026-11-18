@@ -40,6 +40,7 @@ import numpy as np
 from PIL import Image
 
 from . import jpegdct
+from .imagefile import check_regular
 from .hidden import _chi2_sf
 
 MAX_BLOCKS = 60000       # luma blocks decoded by default (about 3.8 megapixels)
@@ -66,6 +67,7 @@ class JpegStego:
     calibrated: dict[int, int] = field(default_factory=dict)
     progressive: bool = False
     error: str | None = None
+    structure: list[str] = field(default_factory=list)   # oddities of the file the reader passed
 
 
 def _ac_stream(jd: jpegdct.JpegData) -> np.ndarray:
@@ -165,6 +167,7 @@ def f5_estimate(jd: jpegdct.JpegData, cal: jpegdct.JpegData) -> float:
 
 
 def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> JpegStego:
+    check_regular(path)
     data = Path(path).read_bytes()
     try:
         jd = jpegdct.read(data, max_blocks=max_blocks)
@@ -178,7 +181,7 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> JpegStego:
     usable = int(((stream != 0) & (stream != 1)).sum())
     hist = {int(v): int(c) for v, c in zip(*np.unique(stream[np.abs(stream) <= 8], return_counts=True))}
     res = JpegStego(int(jd.luma.coeffs.shape[0] * jd.luma.coeffs.shape[1]), nonzero, usable,
-                    round(embedded, 3), round(prefix, 3), probs, histogram=hist)
+                    round(embedded, 3), round(prefix, 3), probs, histogram=hist, structure=jd.notes)
     cal = None
     if res.blocks >= F5_MIN_BLOCKS:
         try:

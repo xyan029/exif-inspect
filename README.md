@@ -47,7 +47,9 @@ For each file:
 | `xmp_crop` | Cropped in Camera Raw, with the share of the frame that was kept |
 | `xmp_ai` | The software, credit or source type in XMP names a generative AI tool |
 | `xmp_date_mismatch` | `xmp:CreateDate` differs from EXIF `DateTimeOriginal`: one of them was rewritten |
-| `trailing_data` | Bytes follow the end of the picture (after JPEG EOI, PNG IEND, the WebP RIFF size or the GIF trailer), with a guess at what they are: an archive, another image, text |
+| `xmp_multiple` | The file carries more than one XMP packet; readers differ on which they show, so an editor named in any of them is flagged |
+| `png_faulty_chunks` | The PNG holds ancillary chunks with a wrong checksum or length, or text that expands past 1 MB: libpng viewers show the file, stricter readers refuse it |
+| `trailing_data` | Bytes follow the end of the picture (after JPEG EOI, PNG IEND, the last WebP chunk or the GIF trailer block), with a guess at what they are: an archive, another image, text |
 | `trailing_image` | A second JPEG after the first, announced by an MPF segment (gain map or extra frame) |
 | `unreadable` | The file could not be opened as an image |
 
@@ -568,7 +570,7 @@ Progressive and arithmetic-coded JPEGs are not read. Adaptive schemes designed a
 
 | File | LSB share | F5 estimate |
 |---|---|---|
-| clean | 0% | 0 to 12% (one phone HDR picture 20%) |
+| clean | 0% | 0 to 12% (one phone HDR picture read 20% until the reader finished its last row of blocks; it reads 4%) |
 | JSteg, random bits in the first 30% of the usable coefficients | 23 to 44%, all in one run from the start | |
 | JSteg, every usable coefficient | 59 to 93% | |
 | F5-like, 10% of the non-zero coefficients changed | 0% | 0 to 21% |
@@ -768,6 +770,163 @@ Block matching compares pixels at one size and one angle, so a clone shrunk or t
 The report gives the scale and rotation from the larger region (A, orange) to the smaller one (B, cyan), with yellow lines joining the matched keypoints. Which region is the original cannot be told from the geometry alone.
 
 On a test set of 40 forgeries made from scikit-image sample photos (a third of each photo pasted back at 1/3, 1/2 and 1.4 times the size, turned 30 degrees, or turned 90 degrees at 0.7 times), block matching found none and keypoint matching found 31. All eight misses on the smooth retina photo and the three clones shrunk to a third in the smallest photos (451 px wide) had too few keypoints to match. Of 18 untouched sample photos, the keypoint mode flagged two: a scanned page of text, where the same letters in the same font genuinely repeat, and a grass texture in which block matching also finds a repeated area. Text, logos and printed patterns can trigger it for that reason.
+
+## Files written against the tool
+
+A forensic tool reads files that someone else chose. Its own parsers are therefore a target: a picture that makes the tool stop, or read something other than what a viewer shows, defeats every check at once, with less work than fooling a single detector. The reader of JPEG coefficients (`jpegdct`, which `dq` and `stego` stand on) and the four byte-level walks behind the trailer, XMP, C2PA and gain map checks were audited with that in mind.
+
+**What a single byte did.** A forged picture that `dq` catches and that carries a ZIP after its end, rewritten without changing one coefficient, so that libjpeg shows the same pixels:
+
+| Rewrite | `dq` before | trailer check before | both now |
+|---|---|---|---|
+| none | region found | ZIP found | found |
+| one FF fill byte in front of the SOS marker, which the standard allows | `error: no scan found` | nothing reported | found |
+| five stray bytes in front of SOS | `error: bad marker` | nothing reported | found |
+| the Huffman tables left out (libjpeg assumes the standard ones) | `error: 0` | ZIP found | found |
+| one scan per component | skipped as "multi-scan" | ZIP found | found |
+| all three components given the same id | `error: bad Huffman code`; on a small file, wrong coefficients with no error | ZIP found | found |
+
+The second column is an analyst losing the analysis. The third is worse, because nothing is printed at all: one byte made appended data invisible.
+
+**Fuzzing.** Small JPEGs mutated with knowledge of the segment structure, each parser run under a limit of 10 seconds and 3 GB. A failure is anything other than a result or the parser's own stated refusal.
+
+| Target | Inputs | Failing before | Failing now |
+|---|---|---|---|
+| coefficient reader, whole file | 40 000 | 15 132, of 23 kinds | 0 |
+| coefficient reader, capped at 40 blocks | 40 000 | 14 241, of 20 kinds | 0 |
+| `dq.analyze` | 3 000 | 2 093, of 30 kinds | 0 |
+| gain map, trailer, C2PA, XMP and thumbnail helpers | 40 000 | 23 (`struct.error` in the MPF table) | 0 |
+| `exif-inspect dq` | 3 000 | 22 that ran past 10 seconds | 0 |
+| report reader, default command, `xmp`, `stego` | 40 000 each, `stego` 3 000 | 0 | 0 |
+| PNG, WebP and GIF through four entry points | 48 000 | 0 | 0 |
+
+The kinds were `IndexError`, `KeyError`, `StopIteration`, `struct.error`, `ZeroDivisionError`, `OverflowError` and accidental `ValueError`s from deep inside the decoder, a run past the time limit and an allocation past the memory limit: a file of 1 129 bytes whose header claims 65 535 by 65 535 pixels asked for 16 GB. The command line catches exceptions per file, so none of this showed as a traceback. It showed as `error: list index out of range` where the analysis should have been.
+
+**The same picture, another reading.** The stronger test compares the reader with libjpeg on 40 000 mutated files. libjpeg shows a picture for 19 745 of them, since it tolerates a great deal.
+
+| Of the 19 745 a viewer shows | before | now |
+|---|---|---|
+| read as the same picture | 8 917 | 19 677 |
+| read as another picture, without a word | 4 559 | 2, by one block each |
+| refused or failed | 6 225 | 14, arithmetic-coded and named as such |
+| not compared (first component stored at reduced size) | 44 | 52 |
+
+**What changed.** The reader now reads a file the way libjpeg reads it, so that the picture analysed is the picture shown:
+
+- Fill bytes and stray bytes in front of a marker are passed over. One walker does this for every byte-level check in the package.
+- A scan may use a Huffman table the file never defines; the standard one is assumed. Components may share an id. A baseline file may spread its components over several scans, and a component scanned twice is laid over itself the way libjpeg lays it: the later scan replaces a value only where it codes one.
+- Damaged data follows libjpeg's rules: a code no table holds costs 17 bits and counts as zero, a run past the last coefficient lands in the last one, lost restart markers are resynchronised by their numbers, and once the data has run out the remaining blocks stay zero. The old reader went on decoding zero bits, which is why a truncated file read as another picture and a 1 KB file with a 16 000 by 16 000 header was still decoding after a minute.
+- A file libjpeg would refuse ends in `Corrupt` with the reason, a kind that is not read in `Unsupported`, and `dq` and `stego` print either as a skip.
+- The block cap now limits the allocation as well as the decoding, and a whole read stops at the size from which Pillow refuses a picture too. Huffman lookups are built only for tables a scan uses, so a file with thousands of table definitions costs nothing.
+- Whatever the reader had to pass over is printed, since none of it comes out of a camera:
+
+```
+== rewritten.jpg
+   structure : a Huffman table the scan needs is not in the file; the standard one was used, as libjpeg does; 1 fill byte in front of a marker; the components come in 3 scans
+   ! saved as a JPEG before, with another table: 15 of the first 15 coefficients show double quantisation
+   ! region around (120, 88, 264, 200) was compressed only once (12.2% of checkable blocks read that way): pasted, painted or filled in after the first save
+```
+
+Sound files are untouched by all this: on 117 JPEGs (89 from cameras) the coefficients, tables and segments are identical before and after. The one exception is a camera sample that is itself damaged: the old reader disagreed with libjpeg in 2 of its 171 rows of blocks, the new one in none. `dq` gives the same output on 152 real-file runs, and reading takes the same time.
+
+**Left open.** Progressive and arithmetic-coded files are still not read. Converting a JPEG to progressive is lossless and takes one command, and it keeps `dq` and `stego` off the file; the output says so by name, and reading progressive scans is the next thing this reader should learn. `FF FF 00` inside the scan data, which the standard forbids, is read as one data byte as libjpeg's reference path does, while libjpeg-turbo can leave stray values in the one MCU where it occurs. The fuzzer mutates eight seeds without coverage feedback, so its silence means these mutations find nothing more, which is a weaker statement than nothing being left.
+
+### Around the picture
+
+A second round left the JPEG structure alone and went for everything beside it: the values in the metadata, the file's own name, a second XMP packet, the chunks of a PNG that no decoder needs, the other things lying in a folder of evidence, and pictures built to make an analysis slow. Every picture in this round opens in a viewer without complaint.
+
+**One question per probe.** Each row is something the author of a file can do with an editor or a hex editor in a minute:
+
+| What the author of the file does | Before | Now |
+|---|---|---|
+| puts a line break and `Findings:` lines into the Software tag, an XMP field or the file's name | the tool prints those lines as its own findings | one line, with `\n` written out |
+| puts an escape sequence or a right-to-left override into a tag | sent to the terminal as written: lines above can be erased, a name shown in another order | shown as `\x1b[1A`, `‮` |
+| sets the GPS time to 4 294 967 295 hours, the image width to infinity, the zone offset to 400 digits, or the model to `iPhone` and 5 000 digits | `OverflowError` or `ValueError` out of the default command, `xmp`, `thumbnail` and `report`; the files named after it are never read | the file gets its findings like any other |
+| appends an archive to a GIF and makes its last byte `;` | no trailer reported | reported |
+| appends bytes to a WebP and raises the size field of its header to cover them | no trailer reported | reported |
+| adds a second, clean XMP packet behind the one that names Photoshop | the clean packet shown, no editor flagged | both counted, the editor flagged |
+| nests one XMP property 1 200 levels deep beside the editing history | `no XMP packet` | history shown |
+| flips one bit in the checksum of a PNG comment, or adds a 3 KB text chunk that expands to 3 MB | every tool answers `cannot identify image file`, while viewers built on libpng show the picture | opened, and the default command names the chunk |
+| leaves a named pipe called `x.jpg` in the folder | the tool waits on it for good | `a named pipe cannot be read as a picture` |
+| leaves a dangling link called `x.jpg` in the folder | `dupes` stops with `FileNotFoundError` for the whole folder | listed as unreadable |
+| plants `photo_ela.png` as a link to some other file | `ela photo.jpg` overwrites that file; so do `copymove`, `stego`, `stego --extract` and `report` with their output names | the link is removed and a new file written in its place |
+| hands over a fingerprint file that is something else | `KeyError` out of `prnu match` | `is not a fingerprint file from 'prnu build'` |
+
+Four further probes found nothing to fix: a sound GIF holding 54 bytes `0x3B` in its pixel data reports no trailer, entity expansion in XMP is refused in six spellings, markup in a file name or an XMP field reaches the HTML report as text, and a flat 170-megapixel PNG of 189 KB goes through the default command in 217 MB.
+
+Here is the first row on a terminal. The Software tag holds `Adobe Photoshop 25.0`, then the sequence that moves the cursor up and clears the line, then three lines of its own. Before, with the escape bytes spelled out:
+
+```
+     Software               Adobe Photoshop 25.0<ESC>[1A<ESC>[2K
+   Findings:
+     - Software tag: 'Camera firmware 1.2'.
+     - nothing in this file points at an editor
+```
+
+Now:
+
+```
+     Software               Adobe Photoshop 25.0\x1b[1A\x1b[2K\r   Findings:\n     - Software tag: 'Camera firmware 1.2'.\n     - nothing in this file points at an editor
+```
+
+**Values.** 4 000 sound JPEGs, each with one to three EXIF or XMP values replaced by a hostile one (numbers at the edge of their type, rationals over zero, text where a number belongs, long digit strings, control characters), each through the default command, `--all`, `--json`, `xmp` and `xmp --raw`:
+
+| Of 4 000 files | before | now |
+|---|---|---|
+| a command ended in an exception | 47 | 0 |
+| a line of the output was written by the metadata | 458 | 0 |
+| control characters reached the output | 1 158 | 0 |
+| `--json` printed `NaN` or `Infinity`, which a strict parser refuses | 461 | 0 |
+| any of these | 1 615 | 0 |
+
+**PNG the way libpng reads it.** For JPEG the reference was libjpeg; for PNG it is libpng, reached through OpenCV. 20 000 PNGs changed one or two chunks at a time:
+
+| Of the 6 962 that libpng shows | before | now |
+|---|---|---|
+| opened to the same pixels | 5 448 | 6 931 |
+| refused | 1 499 | 2 |
+| opened to other pixels | 15 | 29 |
+
+libpng discards an ancillary chunk whose checksum or length is wrong and carries on; Pillow refuses the file, and it refuses text chunks that expand past 1 MB. A fifth of the viewable files were out of reach of every tool that way. The rows of other pixels are all one case, on the reference's side: a stray animation-control chunk makes OpenCV 5 return an empty frame where Pillow, and so the tool, shows the still picture. The two left refused carry the same chunk and a damaged data chunk. The same test on 6 000 GIFs, with OpenCV and ImageMagick together as the reference: of the 380 both show, Pillow opens 379 to the same pixels and one to other pixels, and refuses none.
+
+**Shapes.** 1 667 valid pictures through all 17 commands: 22 sizes from one pixel to 400 by 300, with strips one, three and nine pixels wide, in 25 pairings of mode and format (1-bit, palette, grey with alpha, CMYK, 16-bit, 32-bit float; JPEG, PNG, GIF, WebP, TIFF, BMP), textured, all black and all white, and animations, multi-page files and thumbnails of odd shape. Before, `prnu build` let a `ValueError` from the wavelet library through on 504 of them, `prnu match` and `locate` printed `PCE -inf` and `PCE nan` on 940, and `noise` answered a picture smaller than one block with a numpy message about an empty axis. Each now ends in a sentence about the picture's size, or in a number. No other command failed on any shape or mode.
+
+**Slow on purpose.** `copymove` compared every group of matching blocks with the union of all the others, which is quadratic in the number of groups, and a picture can be made of nothing but groups:
+
+| 800 by 800 pixels | before | now |
+|---|---|---|
+| one 32-pixel tile repeated | 165 s | 6.5 s |
+| a photo saved at JPEG quality 1 | 146 s | 4.3 s |
+| a photo | 5.1 s | 1.9 s |
+
+The count is now taken once. The other commands were timed on eight textures (flat, grid, stripes, 1-bit dither, noise, tiles, quality 1, photo) at 1 600 and 3 200 pixels a side: the slowest are `copymove --keypoints` on an 8-pixel grid (49 s) and `light` on tiles (36 s), both capped by the size they work at.
+
+**Coverage-guided fuzzing.** The first round mutated a fixed set of seeds. This fuzzer keeps every input that reaches a branch of the package no input reached before and mutates those in turn:
+
+| Target | Executions | Failing before | Failing now |
+|---|---|---|---|
+| XMP packet parser | 60 000 | 1 204, all `RecursionError` from nested structures, which the report turned into `no XMP packet` | 0 |
+| EXIF thumbnail directories; C2PA scan | 60 000 each | 0 | 0 |
+| trailer, C2PA and XMP walks of JPEG, PNG, WebP and GIF | 60 000 each | 0 | 0 |
+| coefficient reader, capped at 600 blocks | 2 500 | 0 | 0 |
+| default command on JPEG, PNG, GIF and WebP files | 6 000 each | 0 | 0 |
+
+On the JPEG walks the corpus grew from 8 seeds to 64 inputs and the branches reached from 159 to 291. The byte-level readers held, and so does the code added in this round. Everything else in this section was found by asking what the author of a file controls, which a byte mutator does not ask.
+
+**What changed.**
+
+- Text taken from a file is printed through one function (`textsafe.clean`): control characters, line and paragraph separators, bidirectional controls and lone surrogates are written out as escapes. EXIF and XMP values are cleaned where they are read, so `--json` carries the escaped form too; file names and error messages are cleaned where they are printed. `xmp --raw` prints the packet behind a `|` margin.
+- `--json` is strict JSON: a number that is not finite is `null`.
+- The date, offset, size and model checks catch the overflow each could run into, and a zone offset further than 24 hours from UTC is read as no offset.
+- All XMP packets are found. The first is shown, the count is a finding (`xmp_multiple`), and an editor named by any of them is flagged. Pillow shows the last packet of such a file and ImageMagick joins them, so no single reader's choice is safe to follow. Structures are followed 32 levels deep, and a compressed packet in a PNG is expanded up to the 8 MB cap.
+- A GIF's end is found by following its blocks; a WebP's by following the chunks the format defines, with the header's size field as an upper bound only.
+- Every tool opens its input through `imagefile.opened`: regular files only, and a PNG that Pillow refuses is opened from a copy holding the chunks a decoder needs. The chunks found faulty are a finding (`png_faulty_chunks`), since no encoder writes them. Critical chunks are copied as they stand, so a picture libpng would refuse is not turned into one that looks sound.
+- An output path that exists as a symbolic link is unlinked before writing.
+- `prnu` needs 64 pixels a side, gives PCE 0 for a flat picture, and checks a fingerprint file's arrays before use (NumPy's pickle loading stays off).
+
+On the 102 real sample files the default command's JSON is the same before and after, apart from the three new fields, in all but two. A Polaroid file has a NUL byte inside its model name, which used to go to the terminal as it was and now prints as `\x00`. A test file with GPS rationals over zero used to be reported as `GPS coordinates embedded: nan, nan` and now has no coordinates.
+
+**Left open.** Bytes can also be hidden inside a container: in a private PNG chunk in front of IEND, or in a JPEG comment segment. The trailer check looks behind the picture and reports neither; for WebP an unknown chunk is now reported. Raw bytes inside an enlarged WebP size field make Pillow refuse the file while OpenCV's decoder shows it, so the tools answer with an error there. Pillow stops at about 179 megapixels, under the 200 megapixels some phone sensors deliver, and a picture upscaled past that is refused by every tool. The link check and the write are two steps, which is enough against a link that came with the evidence and too little against someone changing the folder while the tool runs. HEIC files were not part of this round.
 
 ## Tests
 

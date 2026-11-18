@@ -30,6 +30,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 BLOCK = 32              # analysis block in pixels (even, so lattices balance)
 MIN_RESIDUAL = 1.0      # mean squared residual a block needs to be judged at all
 STRONG = 0.5            # |L| that counts as a clear trace
@@ -130,7 +132,7 @@ def expected_ratio(lmap: np.ndarray, power: np.ndarray, usable: np.ndarray) -> n
 
 def analyze(path: str | Path, block: int = BLOCK) -> CfaResult:
     """Map where the picture carries demosaicing traces and where it does not."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         rgb = np.asarray(img.convert("RGB"))
     h, w = rgb.shape[:2]
     oy = max(0, (h - MAX_SIDE) // 2) & ~1     # even offsets keep the lattice parity
