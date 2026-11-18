@@ -87,6 +87,7 @@ exif-inspect dq photo.jpg              # an earlier JPEG save's table, and block
 exif-inspect resample photo.png        # traces of resizing and turning, by region
 exif-inspect xmp photo.jpg             # XMP editing history and Camera Raw settings
 exif-inspect stego photo.png           # bytes after the picture, LSB and JPEG-coefficient steganalysis
+exif-inspect passes photo.jpg          # a JPEG scan by scan: a second picture under the one it ends with
 exif-inspect compare a.jpg b.jpg       # how two versions of a picture relate
 exif-inspect dupes folder/             # duplicates and near-duplicates, with the likely original
 exif-inspect report photo.jpg          # everything above in one HTML page
@@ -575,6 +576,94 @@ Arithmetic-coded JPEGs are not read, and a progressive file that stops before it
 | JSteg, every usable coefficient | 59 to 93% | |
 | F5-like, 10% of the non-zero coefficients changed | 0% | 0 to 21% |
 | F5-like, 30% changed | 0% | 18 to 43% |
+
+## A JPEG scan by scan
+
+```bash
+exif-inspect passes photo.jpg            # the scans, and any band of coefficients sent a second time
+exif-inspect passes --sheet photo.jpg    # also lists every scan and writes photo_passes.png
+```
+
+A JPEG may bring its picture in several scans. A progressive file sends coarse values first and refines them; a sequential one may give each component a scan of its own. A viewer that waits for the end of the file shows the result of all of them. A viewer that draws while the file comes in, and anything that reads a copy cut short, shows what the scans so far have brought.
+
+In a file an encoder wrote, the two never disagree: every band of coefficients is sent once and then refined bit by bit, so each pass shows the final picture at lower precision. The format allows more. A scan may send a band a second time, and the decoder writes the new values over the old ones. So a file can open with a scan that draws one picture and go on with scans that replace it by another.
+
+Two files, `cup.jpg` and `cup_over_cat.jpg`, 69 321 and 72 354 bytes. Pillow decodes them to the same pixels, value for value. The default report, `dq` and `stego` print the same lines for both, the hash apart. `passes`:
+
+```
+== cup.jpg
+   scans : progressive, 10; every band is sent once and refined in order, so each pass shows the final picture at lower precision
+
+== cup_over_cat.jpg
+   scans : progressive, 11
+       1  DC        components 1, 2 and 3  first pass                     3033 bytes    68.1 from the final picture
+       2  DC        components 1, 2 and 3  sent again, down to bit 1      2611 bytes    14.0 from the final picture
+       3  AC 1-5    component 1            first pass, down to bit 2      8393 bytes
+       4  AC 1-63   component 2            first pass, down to bit 1      1641 bytes
+       5  AC 1-63   component 3            first pass, down to bit 1      2139 bytes
+       6  AC 6-63   component 1            first pass, down to bit 2      7829 bytes
+       7  AC 1-63   component 1            refines bit 1                 14968 bytes
+       8  DC        components 1, 2 and 3  refines bit 0                   464 bytes
+       9  AC 1-63   component 2            refines bit 0                  2331 bytes
+      10  AC 1-63   component 3            refines bit 0                  2709 bytes
+      11  AC 1-63   component 1            refines bit 0                 25722 bytes     0.0 from the final picture
+   ! scan 2 sends the DC of components 1, 2 and 3 again and changes it in 99.3% of the blocks, around (0, 0, 480, 320): by 66.8 levels (rms) in component 1
+   ! up to scan 1 the file shows another picture than at its end: the two correlate -0.12 and lie 68.1 grey levels apart (rms, at 1/2 size). A viewer that draws while the file comes in, or a copy cut short there, shows the earlier one.
+   output : cup_over_cat_passes.png (the picture after scans 1, 2 and 11)
+```
+
+The sheet shows a cat after scan 1, the cup in blocks after scan 2 and the cup at the end. The first scan is the DC of a photo of a cat, 3 033 bytes; the ten scans behind it are `cup.jpg`. libjpeg decodes this file without a single warning, since a band that is complete and then sent again from the start fits its bookkeeping. For a coarser first scan it notes an "inconsistent progression sequence"; ImageMagick and OpenCV print that to the console, and Pillow passes nothing on.
+
+**How it reads a file.** The scan headers are read first, and each scan is classed from them: first pass over a band, refinement, sent again, or a refinement out of order. A file where nothing is sent again is judged at that point, in milliseconds. For a band sent again the coefficients are decoded, and the values in front of the scan are compared with the values behind it: in how many blocks they changed beyond the precision of the passes, by how much, and inside which box. The picture in front of the first such scan and the picture at the end are rendered with a plain inverse DCT and compared.
+
+**Scans that are never read.** A sequential file whose first scan holds every component is complete for libjpeg. With more scans behind that one, OpenCV and ImageMagick show the first scan's picture and Pillow refuses the file; none shows what the later scans carry. `passes` counts them and draws them:
+
+```
+== cat_then_scans.jpg
+   scans : sequential, one scan
+   ! 3 more scans (35827 bytes) follow the first scan, which holds every component. libjpeg has its picture by then: viewers built on it show that picture or, as Pillow does, refuse the file, and none shows what the later scans carry. Read by themselves they draw another picture (the two correlate -0.10).
+   output : cat_then_scans_passes.png (the picture after scan 1, and what the unread scans draw)
+```
+
+**Every way the format offers.** One picture under another, written twelve ways, each checked against libjpeg for what the whole file shows and what a copy cut in front of the overwriting scan shows:
+
+| The file | libjpeg, whole file | `passes` |
+|---|---|---|
+| DC of the first picture, then all of the second | the second, exactly | replaced at scan 2, 99% of blocks |
+| the same with the first DC one bit coarser | the second, exactly | replaced at scan 2, 99% |
+| the same in grey | the second, exactly | replaced at scan 2, 99% |
+| the second picture with one patch changed, then the second | the second, exactly | replaced at scan 2, 10% of blocks, box on the patch |
+| chroma of the first, then all of the second | the second, exactly | replaced at scan 2, 99% |
+| all scans of the first, then all scans of the second | the second with remains of the first | replaced at scan 11 |
+| DC of the second, AC of the first, AC of the second | the second with remains of the first | replaced at scan 14 |
+| sequential: three scans of the first, three of the second | the second with remains of the first | replaced at scan 4, 100% |
+| sequential: luma of the first, three scans of the second | the second with remains of the first | replaced at scan 2, 100% |
+| sequential: the first in one scan, then scans of the second | the first, or a refusal | 3 scans that are never read, drawn |
+| the second picture's DC sent twice | the second | sent again with the same values, no picture changes |
+| a refinement in front of its first pass | the second, less its last bit | out of order at scan 2, sent again at scan 3, both named |
+
+"Remains" are real: libjpeg replaces a DC value outright and an AC value only where the later scan codes one, so texture of the first picture stays where the second is smooth, and the refinement passes of the second then meet values they were not written for. The reader follows libjpeg through all of it: its luma differs from libjpeg's by 0.02 grey levels on average in ten of the rows. The other two are the file Pillow refuses and the last row, an unfinished file that libjpeg smooths (0.27, and 0.01 once the file is closed with empty scans).
+
+**Numbers.**
+
+| Files | Result |
+|---|---|
+| 600 two-picture files: random pairs of 15 pictures, 20 sizes, four qualities, three subsamplings and grey, in eight of the forms above | 600 found: 518 as a band sent again, 82 as scans never read |
+| ... the 63 with one patch changed | the whole file is the second picture exactly in all 63; the reported box overlaps the patch by 0.73 (median IoU, lowest 0.41), since it is drawn in whole MCUs |
+| ... the 455 with a whole first picture under a band sent again | in 445 libjpeg ends on the second picture and shows the first for a copy cut short; in 10 the end is a mixture, mostly gravel, grass or brick lying under a smoother second picture |
+| 600 clean files of the same pictures (Pillow baseline and progressive, the tests' encoder in three scan scripts, sequential with a scan per component) | 0 reported |
+| 952 files from Pillow, baseline and progressive, sizes from 1 pixel | 0 reported |
+| 1 512 progressive files in seven scan scripts, among them AC bands in front of the DC | 0 reported |
+| 90 real sample files, 89 of them sequential | 0 reported |
+| 147 test files of other projects (jpeg-decoder, Pillow, libjpeg-turbo, mozjpeg, Go), fuzzer output left out | 129 nothing to report, 17 skipped by name (lossless, 12-bit, arithmetic-coded, damaged), 1 out of order: a test file made with one scan left out |
+| 111 files a fuzzer made for jpeg-decoder | 10 replaced, 15 out of order, 42 skipped by name, no failure |
+| `passes` on 30 000 mutated files, clean and two-picture seeds, and the command on 6 000 | no failure |
+
+A clean file costs the time to read its headers: 25 ms for 12 megapixels. A 12-megapixel file with a band sent again takes 5.1 s, where one plain read of its coefficients takes 2.9 s. Beyond 12.8 megapixels the top of the picture is analysed and the output says how much.
+
+**What it rests on.** The reader's account of such files was checked against libjpeg: 8 000 mutated files from progressive and two-picture seeds, 4 792 of them shown by Pillow and comparable, all read as the same picture. One thing had to change in the reader for that. libjpeg keeps for each component the quantisation table in force at its first scan. A table defined again behind that scan changes nothing a viewer shows, and the reader used to refuse such a file: 138 added bytes took `dq` off a spliced picture with `skipped : quantisation table redefined between scans`. It now keeps the first table as libjpeg does and names the oddity in the `structure :` line.
+
+**Limits.** The check says what a file holds. Which viewer shows the earlier picture was verified for a copy cut short, with Pillow; drawing pass by pass while a file arrives is how progressive display is meant to work, and no browser was tested here. The pictures on the sheet come from a plain inverse DCT, while libjpeg smooths the blocks of an unfinished progressive file, so a viewer's early pass looks softer than the sheet. The words "another picture" are chosen below a correlation of 0.5 at reduced size; the numbers are printed with them. A picture can also look like one thing in coarse detail and another in fine detail with every band sent once, a hybrid image; that is a property of the picture, and each pass of such a file truly is its end at lower precision. Arithmetic-coded, lossless and 12-bit files are skipped by name. The default report and the HTML report do not run this check yet.
 
 ## Comparing two versions
 

@@ -71,6 +71,7 @@ exif-inspect resample photo.png
 exif-inspect light photo.jpg
 exif-inspect thumbnail photo.jpg
 exif-inspect xmp photo.jpg
+exif-inspect passes photo.jpg
 exif-inspect report photo.jpg     # all of the above on one HTML page
 ```
 

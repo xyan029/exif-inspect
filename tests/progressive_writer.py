@@ -190,3 +190,13 @@ def write_progressive(jd: JpegData, script: list[tuple] | None = None, restart: 
     if eoi:
         out += b"\xff\xd9"
     return bytes(out)
+
+
+def scan_offsets(data: bytes) -> list[int]:
+    """Where the SOS markers of a file written here lie."""
+    return [k for k in range(len(data) - 1) if data[k] == 0xFF and data[k + 1] == 0xDA]
+
+
+def splice(first: bytes, then: bytes) -> bytes:
+    """One file from two with the same frame and tables: the scans of `then` behind those of `first`."""
+    return first[:-2] + then[scan_offsets(then)[0]:]

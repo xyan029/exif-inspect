@@ -797,6 +797,131 @@ def dq_main(argv: list[str]) -> int:
     return exit_code
 
 
+def _listed(numbers: list[int]) -> str:
+    words = [str(n) for n in numbers]
+    return words[0] if len(words) == 1 else ", ".join(words[:-1]) + " and " + words[-1]
+
+
+def passes_main(argv: list[str]) -> int:
+    from . import passes
+
+    parser = argparse.ArgumentParser(
+        prog="exif-inspect passes",
+        description="Follow a JPEG scan by scan: list the scans, find bands of coefficients that "
+                    "are sent a second time, and compare the picture in front of such a scan "
+                    "with the picture the file ends with.",
+    )
+    parser.add_argument("images", nargs="+", help="JPEG files")
+    parser.add_argument("-s", "--sheet", action="store_true",
+                        help="list every scan and write the pictures after the scans as one PNG, "
+                             "also when nothing was found")
+    parser.add_argument("-o", "--output",
+                        help="output PNG (single image only; default: <name>_passes.png, written "
+                             "when a scan sends a band again, or with --sheet)")
+    args = parser.parse_args(argv)
+    if args.output and len(args.images) > 1:
+        parser.error("--output works with a single image")
+
+    def described(row) -> str:
+        bit = f", down to bit {row.al}" if row.al else ""
+        return {"first": "first pass" + bit, "again": "sent again" + bit,
+                "refine": f"refines bit {row.al}",
+                "out of order": f"refines bit {row.al}, out of order"}[row.kind]
+
+    def named(row) -> str:
+        return ("component " if len(row.components) == 1 else "components ") + _listed(row.components)
+
+    exit_code = 0
+    for image in args.images:
+        src = Path(image)
+        print(f"== {src}")
+        try:
+            res = passes.analyze(src, sheet=args.sheet)
+        except Exception as exc:
+            print(f"   error  : {_t(exc)}\n")
+            exit_code = 1
+            continue
+        if res.verdict == "skipped":
+            print(f"   skipped : {res.note}\n")
+            continue
+        if res.structure:
+            print("   structure : " + "; ".join(res.structure))
+        kind = "progressive" if res.progressive else "sequential"
+        n = len(res.rows)
+        if res.verdict == "single":
+            print(f"   scans : {kind}, one scan")
+        elif res.verdict == "consistent":
+            print(f"   scans : {kind}, {n}; every band is sent once"
+                  + (" and refined in order, so each pass shows the final picture at lower precision"
+                     if res.progressive else ", so each scan adds to the picture and none replaces a part of it"))
+        else:
+            print(f"   scans : {kind}, {n}")
+        if n > 1 and (args.sheet or res.verdict not in ("single", "consistent")):
+            for row in res.rows[:passes.LISTED]:
+                away = f"   {row.away:5.1f} from the final picture" if row.away is not None else ""
+                print(f"     {row.index:3d}  {row.band:9s} {named(row):22s} {described(row):27s}"
+                      f"{row.size:8d} bytes{away}")
+            if n > passes.LISTED:
+                print(f"          ... and {n - passes.LISTED} more")
+        if res.covered < 1:
+            print(f"   analysed the top {res.covered:.0%} of the picture ({passes.MAX_BLOCKS} blocks)")
+        part = "" if res.covered >= 1 else " of the part analysed"
+        for row in res.rows:
+            if row.kind != "again":
+                continue
+            if row.se == 0:
+                what, it = f"the DC of {named(row)}", "it"
+            elif row.ss == 0:
+                what, it = named(row), "it" if len(row.components) == 1 else "them"
+            else:
+                what, it = f"coefficients {row.ss} to {row.se} of {named(row)}", "them"
+            if row.changed:
+                print(f"   ! scan {row.index} sends {what} again and changes {it} in {row.changed:.1%} of "
+                      f"the blocks{part}, around {row.box}: by {row.moved:.1f} levels (rms) in component "
+                      f"{row.moved_in}")
+            else:
+                print(f"   ! scan {row.index} sends {what} again with the values already there{part}: "
+                      "no picture changes by it, and no encoder writes such a scan")
+        odd = [row for row in res.rows if row.kind == "out of order"]
+        if odd:
+            row = odd[0]
+            print(f"   ! scan {row.index} refines bit {row.al} of {row.band} in {named(row)} before the bit above it "
+                  f"was sent" + (f"; {len(odd) - 1} more scans are out of order as well" if len(odd) > 1 else "")
+                  + ". libjpeg decodes this with a warning and shows the picture.")
+        if res.replaced_at:
+            upto = res.replaced_at - 1
+            if res.correlation is not None and res.correlation < passes.OTHER_PICTURE:
+                what = "another picture than at its end"
+            else:
+                what = "a picture that differs from the one at its end"
+            how = ""
+            if res.distance is not None:
+                size = "" if res.scale == 1 else f", at 1/{res.scale} size"
+                corr = f"the two correlate {res.correlation:.2f} and" if res.correlation is not None else "the two"
+                how = f": {corr} lie {res.distance:.1f} grey levels apart (rms{size})"
+            print(f"   ! up to scan {upto} the file shows {what}{how}. A viewer that draws while "
+                  "the file comes in, or a copy cut short there, shows the earlier one.")
+        if res.extra:
+            count, size = res.extra
+            drawn = ""
+            if res.unread is not None:
+                r = res.unread_correlation
+                drawn = (" Read by themselves they draw "
+                         + ("another picture" if r is not None and r < passes.OTHER_PICTURE else "a picture like it")
+                         + (f" (the two correlate {r:.2f})." if r is not None else "."))
+            print(f"   ! {count} more scan{'s' if count != 1 else ''} ({size} bytes) follow{'s' if count == 1 else ''} "
+                  "the first scan, which holds every component. libjpeg has its picture by then: "
+                  "viewers built on it show that picture or, as Pillow does, refuse the file, and "
+                  "none shows what the later scans carry." + drawn)
+        if res.thumbs:
+            out = _fresh(Path(args.output) if args.output else src.with_name(f"{src.stem}_passes.png"))
+            passes.render(res).save(out)
+            print(f"   output : {out} (the picture after scan{'s' if len(res.thumbs) != 1 else ''} "
+                  f"{_listed(sorted(res.thumbs))}" + (", and what the unread scans draw" if res.unread is not None else "") + ")")
+        print()
+    return exit_code
+
+
 def xmp_main(argv: list[str]) -> int:
     parser = argparse.ArgumentParser(
         prog="exif-inspect xmp",
@@ -1119,6 +1244,8 @@ def main(argv: list[str] | None = None) -> int:
         return resample_main(argv[1:])
     if argv and argv[0] == "dq":
         return dq_main(argv[1:])
+    if argv and argv[0] == "passes":
+        return passes_main(argv[1:])
     if argv and argv[0] == "xmp":
         return xmp_main(argv[1:])
     if argv and argv[0] == "report":
@@ -1135,7 +1262,7 @@ def main(argv: list[str] | None = None) -> int:
         description="Print EXIF metadata and simple forensic hints for images.",
         epilog="Subcommands: ela (error level analysis), ghost (JPEG ghosts), light (lighting "
                "direction), cfa (demosaicing traces), noise (noise level), resample (resizing and turning), dq (double JPEG "
-               "quantisation), "
+               "quantisation), passes (a JPEG scan by scan), "
                "xmp (editing history), "
                "stego (hidden data), compare (two versions of a picture), dupes (duplicates across "
                "folders), copymove, thumbnail, prnu, "

@@ -4,9 +4,10 @@
 exif-inspect stego photo.png              # trailer and LSB steganalysis, writes photo_lsb.png
 exif-inspect stego photo.jpg              # trailer and the JSteg / F5 tests on the DCT coefficients
 exif-inspect stego --extract photo.jpg    # also saves the bytes after the picture
+exif-inspect passes photo.jpg             # a JPEG scan by scan: a second picture under the one it ends with
 ```
 
-Three places to hide things in an image file.
+Four places to hide things in an image file. Three hold bytes; the fourth holds a picture.
 
 ## After the picture
 
@@ -55,6 +56,37 @@ A JPEG stores no pixels. It stores the quantised DCT coefficients of each 8x8 bl
 | F5-like, 30% changed | 0% | 18 to 43% |
 
 The LSB test is the firm one. The F5 estimate is a lead: it is printed, noted from 15% and flagged from 30%, and a heavily processed phone picture can sit in the noted band with nothing in it. When it is the only raised number, look at the file's origin before concluding anything.
+
+## Under the picture: scans sent again
+
+A JPEG may bring its picture in several scans, and a decoder writes each scan over what it has. In a file from an encoder every band of coefficients is sent once and then refined, so each pass shows the final picture at lower precision. A file written by hand can send a band a second time with other values. Its first scans then draw one picture and its later scans another. A viewer that waits for the end shows the later one. A copy of the file cut short shows the earlier one, and so does a viewer that draws pass by pass while the file arrives.
+
+`exif-inspect passes` reads the scan headers and classes each scan: first pass, refinement, sent again, out of order. Where a band is sent again it compares the values in front of that scan with the values behind it and renders both pictures.
+
+```
+== cup_over_cat.jpg
+   scans : progressive, 11
+       1  DC        components 1, 2 and 3  first pass                     3033 bytes    68.1 from the final picture
+       2  DC        components 1, 2 and 3  sent again, down to bit 1      2611 bytes    14.0 from the final picture
+     ...
+   ! scan 2 sends the DC of components 1, 2 and 3 again and changes it in 99.3% of the blocks, around (0, 0, 480, 320): by 66.8 levels (rms) in component 1
+   ! up to scan 1 the file shows another picture than at its end: the two correlate -0.12 and lie 68.1 grey levels apart (rms, at 1/2 size). A viewer that draws while the file comes in, or a copy cut short there, shows the earlier one.
+   output : cup_over_cat_passes.png (the picture after scans 1, 2 and 11)
+```
+
+Pillow decodes this file to the same pixels as the clean one, and libjpeg raises no warning for it.
+
+| Line | Meaning |
+|---|---|
+| `every band is sent once and refined in order` | What encoders write. Nothing under the picture. |
+| `scan N sends ... again and changes it in X% of the blocks, around (box)` | The scans in front of N drew something else there. The sheet shows it. |
+| `scan N sends ... again with the values already there` | A repeated scan that changes no picture. No encoder writes one. |
+| `scan N refines bit B ... before the bit above it was sent` | Scans out of order. libjpeg decodes them with a warning and shows the picture. |
+| `N more scans follow the first scan, which holds every component` | A sequential file that is complete after its first scan. Viewers built on libjpeg show that scan's picture or refuse the file; the later scans are drawn on the sheet. |
+
+In 600 two-picture files of eight kinds all 600 were found, and none of 600 clean files of the same pictures was reported, nor any of 2 464 files from Pillow and the tests' encoder. `--sheet` lists every scan and writes the sheet for a clean file too.
+
+The check says what the file holds. Which viewer shows the earlier picture depends on the viewer: a copy cut short was verified with Pillow, and no browser was tested. A file is analysed up to 12.8 megapixels from the top.
 
 ## What it does not see
 
