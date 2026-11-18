@@ -38,6 +38,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .imagefile import opened
+
 try:
     import pywt
 except ImportError:  # pragma: no cover - exercised only without PyWavelets
@@ -48,6 +50,7 @@ LEVELS = 4
 WAVELET = "db4"
 CROP = 2048          # side of the centre crop analysed (0 or too large: the largest centred square)
 PCE_THRESHOLD = 60.0
+MIN_SIDE = 64        # smallest crop the wavelet denoiser and the correlation are run on
 SATURATED = 250
 
 
@@ -62,11 +65,14 @@ def load(path: str | Path, crop: int = CROP) -> np.ndarray:
     sensor grid. Portrait shots from a phone are often stored turned, which
     match() handles by trying the four rotations.
     """
-    with Image.open(path) as img:
+    with opened(path) as img:
         arr = np.asarray(img.convert("RGB"), dtype=np.float32)
     h, w = arr.shape[:2]
     if crop <= 0 or min(h, w) < crop:      # 0: the largest centred square
         crop = min(h, w) - min(h, w) % 2
+    if crop < MIN_SIDE:
+        raise ValueError(f"picture too small for PRNU: {w}x{h}, and the pattern is measured on a "
+                         f"square of at least {MIN_SIDE} pixels a side")
     y0, x0 = (h - crop) // 2, (w - crop) // 2
     return arr[y0:y0 + crop, x0:x0 + crop]
 
@@ -148,15 +154,19 @@ class Fingerprint:
 
     @classmethod
     def load(cls, path: str | Path) -> "Fingerprint":
-        d = np.load(path)
-        source = tuple(int(v) for v in d["source"]) if "source" in d.files else None
-        return cls(k=d["k"].astype(np.float64), images=int(d["images"]), crop=int(d["crop"]),
-                   source=source if source and source[0] else None)
+        with np.load(path) as d:            # allow_pickle stays off: arrays only
+            source = tuple(int(v) for v in d["source"]) if "source" in d.files else None
+            k, images, crop = d["k"].astype(np.float64), int(d["images"]), int(d["crop"])
+        if k.ndim != 2 or k.shape[0] != k.shape[1] or k.shape[0] != crop or crop < MIN_SIDE:
+            raise ValueError(f"fingerprint array of shape {k.shape} for a crop of {crop}")
+        if not np.isfinite(k).all():
+            raise ValueError("fingerprint holds values that are not numbers")
+        return cls(k=k, images=images, crop=crop, source=source if source and source[0] else None)
 
 
 def _size(path) -> tuple[int, int]:
     """(long side, short side) of a stored image, read from its header."""
-    with Image.open(path) as img:
+    with opened(path, decode=False) as img:
         return max(img.size), min(img.size)
 
 
@@ -241,6 +251,8 @@ def pce(a: np.ndarray, b: np.ndarray, exclude: int = 11) -> tuple[float, tuple[i
     sign = 1.0 if peak >= 0 else -1.0
     shift = (int(yy if yy <= xc.shape[0] // 2 else yy - xc.shape[0]),
              int(xx if xx <= xc.shape[1] // 2 else xx - xc.shape[1]))
+    if not energy > 0:                    # a flat picture or an empty fingerprint: nothing to correlate
+        return 0.0, shift
     return float(sign * peak ** 2 / energy), shift
 
 
@@ -374,7 +386,7 @@ def locate(fp: "Fingerprint", path: str | Path, block: int | None = None,
     zmap, rel, flag = zmap / count, rel / count >= 0.5, flag / count >= 0.5
     zmap, rel, flag = (np.rot90(m, -k) for m in (zmap, rel, flag))
 
-    with Image.open(path) as img:
+    with opened(path) as img:
         sw, sh = img.size
     ox, oy = (sw - zmap.shape[1]) // 2, (sh - zmap.shape[0]) // 2
     box = None
@@ -390,7 +402,7 @@ def locate(fp: "Fingerprint", path: str | Path, block: int | None = None,
 
 def render_locate(path: str | Path, res: LocateResult) -> Image.Image:
     """Image with flagged areas in red, areas too dark or busy to judge dimmed."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         base = np.asarray(img.convert("RGB"), dtype=np.float64)
     out = base * 0.55
     ox, oy = res.offset

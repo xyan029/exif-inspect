@@ -28,6 +28,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .imagefile import check_regular, opened
+
 EXTENSIONS = {".jpg", ".jpeg", ".jpe", ".png", ".webp", ".gif", ".bmp", ".tif", ".tiff",
               ".heic", ".heif"}
 DISTANCE = 10          # pHash bits that may differ within a group
@@ -123,11 +125,16 @@ def closest(e1: Entry, e2: Entry) -> tuple[int, int, int]:
 
 
 def read_entry(path: Path) -> Entry:
-    data = path.read_bytes()
-    sha = hashlib.sha256(data).hexdigest()
-    stat = path.stat()
     try:
-        with Image.open(path) as img:
+        check_regular(path)                 # a pipe named like a picture would never finish reading
+        data = path.read_bytes()
+        stat = path.stat()
+    except (OSError, MemoryError) as exc:   # a dangling link, no permission, larger than memory
+        return Entry(str(path), "", (0, 0), "?", 0, None, 0, 0.0, [], [],
+                     error=str(exc) or type(exc).__name__)
+    sha = hashlib.sha256(data).hexdigest()
+    try:
+        with opened(path) as img:
             fmt = img.format or "?"
             size = img.size
             quality = None

@@ -25,6 +25,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from .imagefile import opened
+
 
 @dataclass
 class Clone:
@@ -63,7 +65,7 @@ def detect(
     max_shared: float = 0.5,
     blur: float = 1.0,
 ) -> CopyMoveResult:
-    with Image.open(path) as img:
+    with opened(path) as img:
         gray = img.convert("L")
     scale = min(1.0, max_side / max(gray.size))
     if scale < 1.0:
@@ -138,10 +140,15 @@ def detect(
     # shifts, so their blocks show up in several groups. A cloned region
     # matches its copy at one shift only.
     members = [set(src.tolist()) | set(dst.tolist()) for *_, src, dst in groups]
+    # How many groups each block is in. Counting once keeps this step linear in the number
+    # of pairs; a picture of one repeated tile makes thousands of groups, and comparing each
+    # against the union of all the others took minutes on it.
+    in_groups: Counter = Counter()
+    for m in members:
+        in_groups.update(m)
     clones: list[Clone] = []
     for n_, (sx, sy, total, src_idx, dst_idx) in enumerate(groups):
-        others = set().union(*(m for k_, m in enumerate(members) if k_ != n_))
-        shared = len(members[n_] & others) / len(members[n_])
+        shared = sum(1 for b in members[n_] if in_groups[b] > 1) / len(members[n_])
         if shared > max_shared:
             continue
         sample = np.linspace(0, len(src_idx) - 1, min(200, len(src_idx))).astype(int)
@@ -168,7 +175,7 @@ def detect(
 
 def draw(path: str | Path, result: CopyMoveResult) -> Image.Image:
     """Original image with source boxes in orange, copies in cyan, and arrows."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         out = img.convert("RGB")
     d = ImageDraw.Draw(out)
     width = max(2, out.width // 300)

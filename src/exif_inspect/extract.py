@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 import hashlib
+import math
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
 from PIL import ExifTags, Image
+
+from .imagefile import check_regular, opened
 
 try:  # optional: lets Pillow open iPhone HEIC/HEIF photos
     from pillow_heif import register_heif_opener
@@ -25,6 +28,7 @@ from .xmp import XmpInfo
 from .xmp import read as read_xmp
 from .hidden import Trailer
 from .hidden import trailer as find_trailer
+from .textsafe import clean as _safe_text
 
 # Sub-IFDs that Pillow does not expand by default.
 _SUB_IFDS = {
@@ -51,6 +55,7 @@ class ImageReport:
     gain_map: GainMapInfo | None = None
     xmp: XmpInfo = field(default_factory=XmpInfo)
     trailer: Trailer | None = None
+    structure: list[str] = field(default_factory=list)   # faulty chunks set aside to open the file
     error: str | None = None
 
     @property
@@ -68,27 +73,33 @@ def sha256_of(path: Path, chunk_size: int = 1 << 16) -> str:
 
 
 def _clean(value: Any, max_bytes: int = 64) -> Any:
-    """Turn EXIF values into something printable and JSON-safe."""
+    """Turn EXIF values into something printable and JSON-safe.
+
+    Text comes back on one line with control characters written out as escapes (see
+    textsafe); a number that is not finite, such as a rational over zero, comes back as None.
+    """
     if isinstance(value, bytes):
         text = value.rstrip(b"\x00")
         try:
             decoded = text.decode("utf-8")
             if decoded.isprintable():
-                return decoded
+                return _safe_text(decoded)
         except UnicodeDecodeError:
             pass
         if len(value) > max_bytes:
             return f"<{len(value)} bytes>"
         return value.hex()
     if isinstance(value, str):
-        return value.rstrip("\x00").strip()
+        return _safe_text(value.rstrip("\x00").strip())
     if isinstance(value, tuple):
         return [_clean(v) for v in value]
     # IFDRational and similar numeric types
     if hasattr(value, "numerator") and hasattr(value, "denominator"):
         if value.denominator == 0:
             return None
-        return float(value)
+        value = float(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
     return value
 
 
@@ -104,6 +115,8 @@ def _dms_to_decimal(dms: Any, ref: Any) -> float | None:
     except (TypeError, ValueError, ZeroDivisionError):
         return None
     decimal = deg + minutes / 60 + seconds / 3600
+    if not math.isfinite(decimal):          # a rational over zero reads as not-a-number
+        return None
     if str(ref).upper() in {"S", "W"}:
         decimal = -decimal
     return round(decimal, 6)
@@ -113,13 +126,16 @@ def read_image(path: str | Path) -> ImageReport:
     """Extract metadata from a single image. Never raises on bad input."""
     path = Path(path)
     try:
+        check_regular(path)
         data = path.read_bytes()
     except OSError as exc:
         return ImageReport(str(path), "", None, None, None, error=str(exc))
+    except MemoryError:
+        return ImageReport(str(path), "", None, None, None, error="the file does not fit in memory")
     digest = hashlib.sha256(data).hexdigest()
 
     try:
-        with Image.open(path) as img:
+        with opened(path) as img:
             report = ImageReport(
                 path=str(path),
                 sha256=digest,
@@ -127,6 +143,7 @@ def read_image(path: str | Path) -> ImageReport:
                 size=img.size,
                 mode=img.mode,
             )
+            report.structure = list(img.info.get("png_set_aside", ()))
             exif = img.getexif()
             jpeg_quant = analyze(img)
             img_info = dict(img.info)

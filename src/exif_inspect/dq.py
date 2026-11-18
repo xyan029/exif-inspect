@@ -45,6 +45,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import check_regular, opened
+
 from . import jpegdct
 from .quant import STD_LUMA, scaled_table
 
@@ -103,6 +105,7 @@ class DqResult:
     size: tuple[int, int] = (0, 0)
     rgb: np.ndarray | None = field(default=None, repr=False)
     smeared: bool = False            # blocks read as compressed once, with no clear background
+    structure: list[str] = field(default_factory=list)   # oddities of the file the reader passed
 
 
 def block_dct(pixels: np.ndarray) -> np.ndarray:
@@ -214,6 +217,7 @@ def _skipped(note: str) -> DqResult:
 
 def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
     """Estimate an earlier save's quantisation steps and map the blocks that lack them."""
+    check_regular(path)
     data = Path(path).read_bytes()
     if data[:2] != b"\xff\xd8":
         return _skipped("not a JPEG, so there are no quantised coefficients to read")
@@ -221,7 +225,12 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
         jd = jpegdct.read(data, max_blocks=max_blocks)
     except jpegdct.Unsupported as exc:
         return _skipped(f"{exc}; only baseline JPEGs can be read")
+    except ValueError as exc:                    # jpegdct.Corrupt, or a file without a scan
+        return _skipped(f"the JPEG structure is damaged: {exc}")
     luma = jd.luma
+    if luma.h < max(c.h for c in jd.components) or luma.v < max(c.v for c in jd.components):
+        return _skipped("the first component is stored at reduced size, which no camera or editor "
+                        "does to luma")
     table = jd.qtables[luma.tq]
     rows = luma.blocks_h
     if rows * 8 < jd.height:                     # stopped at the cap: the last rows are part filled
@@ -243,6 +252,8 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
     ratio = np.zeros(coeffs.shape[:2])
     for z in FREQS:
         current = int(table[z])
+        if current == 0:                         # a step of zero: the coefficient was thrown away
+            continue
         observed = coeffs[:, :, z]
         step, gain, left, share, single, double, gains = first_step(
             observed, calibrated[:, z], noise, current)
@@ -253,11 +264,15 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
         idx = np.clip(observed, -RANGE, RANGE) + RANGE
         ratio += np.log(single[idx] / double[idx])
 
-    with Image.open(path) as img:
-        rgb = np.asarray(img.convert("RGB"))
+    try:
+        with opened(path) as img:
+            rgb = np.asarray(img.convert("RGB"))
+    except Exception as exc:                     # Pillow raises many types on a damaged file
+        return _skipped(f"the picture does not decode: {exc}")
     size = (rgb.shape[1], rgb.shape[0])
     if len(steps) < MIN_FREQS:
-        return DqResult("none", "", [], None, 0.0, 0.0, None, round(covered, 3), size=size, rgb=rgb)
+        return DqResult("none", "", [], None, 0.0, 0.0, None, round(covered, 3), size=size, rgb=rgb,
+                        structure=jd.notes)
 
     used = [s.index for s in steps]
     judged = (coeffs[:, :, used] != 0).sum(axis=2) >= MIN_NONZERO
@@ -292,7 +307,7 @@ def analyze(path: str | Path, max_blocks: int | None = MAX_BLOCKS) -> DqResult:
     return DqResult(verdict, "", steps, libjpeg_quality(found) if len(steps) >= MAP_FREQS else None,
                     round(float(judged.mean()), 3),
                     round(float(once.sum() / max(1, judged.sum())), 3),
-                    box, round(covered, 3), smooth, judged, region, size, rgb, smeared)
+                    box, round(covered, 3), smooth, judged, region, size, rgb, smeared, jd.notes)
 
 def render(res: DqResult) -> Image.Image:
     """The picture dimmed where it cannot be judged, red where it was compressed once."""

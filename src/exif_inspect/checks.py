@@ -55,7 +55,7 @@ def _dimension_check(report: ImageReport) -> Finding | None:
     try:
         ew = int(float(exif["ExifImageWidth"]))
         eh = int(float(exif["ExifImageHeight"]))
-    except (KeyError, TypeError, ValueError):
+    except (KeyError, TypeError, ValueError, OverflowError):   # absent, not a number, infinite
         return None
     if not report.size or (ew, eh) in (report.size, report.size[::-1]):
         return None
@@ -125,9 +125,10 @@ def _parse_offset(text: str) -> float | None:
     try:
         sign = -1 if text.strip().startswith("-") else 1
         hours, minutes = text.strip().lstrip("+-").split(":")[:2]
-        return sign * (int(hours) + int(minutes) / 60)
-    except (ValueError, AttributeError):
+        offset = sign * (int(hours) + int(minutes) / 60)
+    except (ValueError, AttributeError, OverflowError):
         return None
+    return offset if abs(offset) <= 24 else None       # no clock runs further from UTC
 
 
 def _gps_checks(report: ImageReport) -> list[Finding]:
@@ -166,7 +167,7 @@ def _gps_checks(report: ImageReport) -> list[Finding]:
                     f"GPS fix time ({gps['GPSDateStamp']} {h:02.0f}:{m:02.0f}:{sec:04.1f} UTC) "
                     f"is {gap / 3600:.1f} h away from the capture time; one of them was edited.",
                 ))
-        except (KeyError, TypeError, ValueError):
+        except (KeyError, TypeError, ValueError, OverflowError):   # OverflowError: a time past year 9999
             pass
 
     make = str(image.get("Make", "")).lower()
@@ -283,7 +284,7 @@ def _gain_map_checks(report: ImageReport) -> list[Finding]:
         )]
     model = str(report.groups.get("Image", {}).get("Model", ""))
     make = str(report.groups.get("Image", {}).get("Make", ""))
-    m = re.search(r"iPhone (\d+)", model)
+    m = re.search(r"iPhone (\d{1,3})(?!\d)", model)
     if (make.startswith("Apple") and m and int(m.group(1)) >= 12
             and report.format in ("JPEG", "MPO", "HEIF")):
         return [Finding(
@@ -294,6 +295,15 @@ def _gain_map_checks(report: ImageReport) -> list[Finding]:
             "converted by other software, lack it too.",
         )]
     return []
+
+
+def _structure_check(report: ImageReport) -> Finding | None:
+    if not report.structure:
+        return None
+    return Finding("flag", "png_faulty_chunks",
+                   "The PNG holds " + "; ".join(report.structure) + ". Viewers built on libpng pass "
+                   "over such chunks and show the picture, stricter readers refuse the whole file; "
+                   "the chunks were written by faulty software or changed after the file was made.")
 
 
 def _xmp_date(value: str | None) -> str | None:
@@ -334,10 +344,16 @@ def _xmp_checks(report: ImageReport) -> list[Finding]:
     if not x.present:
         return []
     out: list[Finding] = []
-    editors = [a for a in x.agents if any(name in a.lower() for name in EDITORS)]
+    if x.packets > 1:
+        named = (" The others name " + ", ".join(f"'{t}'" for t in x.other_tools[:4]) + "."
+                 if x.other_tools else "")
+        out.append(Finding("flag", "xmp_multiple",
+                           f"The file carries {x.packets} XMP packets where a file should carry one; "
+                           f"readers differ on which they show, and the first is shown here.{named}"))
+    editors = [a for a in x.agents + x.other_tools if any(name in a.lower() for name in EDITORS)]
     if editors:
         out.append(Finding("flag", "xmp_editor",
-                           f"XMP names an image editor: {editors[0]!r}."))
+                           f"XMP names an image editor: '{editors[0]}'."))
     if x.history:
         steps = []
         for e in x.history[:6]:
@@ -354,7 +370,7 @@ def _xmp_checks(report: ImageReport) -> list[Finding]:
                            f"XMP says this file was derived from another document ({source})."))
     if x.raw_file:
         out.append(Finding("info", "xmp_raw",
-                           f"Developed from the raw file {x.raw_file!r} with Camera Raw settings "
+                           f"Developed from the raw file '{x.raw_file}' with Camera Raw settings "
                            f"{', '.join(f'{k} {v}' for k, v in list(x.crs_settings.items())[:5])}."))
     if x.retouch_areas:
         out.append(Finding("flag", "xmp_retouch",
@@ -386,7 +402,7 @@ def run_checks(report: ImageReport) -> list[Finding]:
         return [Finding("flag", "unreadable", f"Could not read file: {report.error}")]
 
     findings: list[Finding] = []
-    for check in (_extension_check, _dimension_check, _quant_check, _trailer_check):
+    for check in (_extension_check, _structure_check, _dimension_check, _quant_check, _trailer_check):
         result = check(report)
         if result:
             findings.append(result)
@@ -415,10 +431,10 @@ def run_checks(report: ImageReport) -> list[Finding]:
         if any(name in software.lower() for name in EDITORS):
             findings.append(Finding(
                 "flag", "editor_software",
-                f"Software tag names an image editor: {software!r}.",
+                f"Software tag names an image editor: '{software}'.",
             ))
         else:
-            findings.append(Finding("info", "software", f"Software tag: {software!r}."))
+            findings.append(Finding("info", "software", f"Software tag: '{software}'."))
 
     modified = image.get("DateTime")
     original = exif.get("DateTimeOriginal")

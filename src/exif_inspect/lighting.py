@@ -29,6 +29,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 SIZE = 1200            # longest side analysed, in pixels
 MIN_PIXELS = 60        # edge pixels a chain needs
 MIN_ARC = 100.0        # degrees of normal directions a chain must cover
@@ -225,7 +227,7 @@ def analyze(path: str | Path, boxes: list[tuple[int, int, int, int]] | None = No
     for one object and the best outline inside it (most pixels, weighted by
     how well the model fits) gives that object's direction.
     """
-    with Image.open(path) as img:
+    with opened(path) as img:
         rgb = np.asarray(img.convert("RGB"))
     h, w = rgb.shape[:2]
     scale = min(1.0, SIZE / max(h, w))

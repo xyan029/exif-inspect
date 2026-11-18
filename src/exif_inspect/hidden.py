@@ -34,6 +34,10 @@ from pathlib import Path
 import numpy as np
 from PIL import Image
 
+from .imagefile import opened
+
+from . import jpegdct
+
 # --- trailing data -----------------------------------------------------------
 
 SNIFF = [
@@ -67,29 +71,29 @@ class Trailer:
 
 def _jpeg_end(data: bytes) -> tuple[int | None, bool]:
     """Offset just past the first EOI marker, and whether an MPF segment announces more images."""
-    i, mpf = 2, False
-    while i + 4 <= len(data):
-        if data[i] != 0xFF:
-            return None, mpf
-        marker = data[i + 1]
-        if marker == 0xD9:
-            return i + 2, mpf
-        if marker == 0xDA:
-            break
-        if marker in (0x01, 0xD8) or 0xD0 <= marker <= 0xD7:
-            i += 2
-            continue
-        length, = struct.unpack(">H", data[i + 2:i + 4])
-        if marker == 0xE2 and data[i + 4:i + 8] == b"MPF\x00":
-            mpf = True
-        i += 2 + length
-    # Entropy-coded data: the next FF D9 that is not inside a stuffed byte or restart marker.
-    pos = i
+    head = jpegdct.walk(data)
+    mpf = any(marker == 0xE2 and payload[:4] == b"MPF\x00" for _, marker, payload in head.segments)
+    if head.scan is None:
+        return head.eoi, mpf
+    # After the first scan come restart markers and stuffed bytes, which are data, and in a
+    # file of several scans more segments, which are skipped by their length.
+    i, n = head.scan, len(data)
     while True:
-        pos = data.find(b"\xff\xd9", pos)
-        if pos == -1:
+        j = jpegdct.end_of_scan(data, i)
+        if j + 1 >= n:
             return None, mpf
-        return pos + 2, mpf
+        marker = data[j + 1]
+        if marker == 0xD9:
+            return j + 2, mpf
+        if marker in jpegdct.STANDALONE:
+            i = j + 2
+            continue
+        if j + 4 > n:
+            return None, mpf
+        length = (data[j + 2] << 8) | data[j + 3]
+        if length < 2:
+            return None, mpf
+        i = j + 2 + length
 
 
 def _png_end(data: bytes) -> int | None:
@@ -103,16 +107,66 @@ def _png_end(data: bytes) -> int | None:
     return None
 
 
+# Chunks the WebP container format defines; a decoder reads these and passes over the rest.
+_WEBP_CHUNKS = frozenset((b"VP8 ", b"VP8L", b"VP8X", b"ALPH", b"ANIM", b"ANMF", b"ICCP", b"EXIF", b"XMP "))
+
+
 def _webp_end(data: bytes) -> int | None:
-    if len(data) < 12 or data[:4] != b"RIFF":
+    """Offset just past the last chunk a WebP decoder reads.
+
+    The size field in the RIFF header is the file's own claim and is trusted only as an
+    upper bound: enlarged to cover appended bytes, it would otherwise make them part of the
+    picture. A file in the simple format is one VP8 or VP8L chunk; in the extended format
+    the chunks are followed while they carry a name the format defines.
+    """
+    if len(data) < 12 or data[:4] != b"RIFF" or data[8:12] != b"WEBP":
         return None
     size, = struct.unpack("<I", data[4:8])
-    return 8 + size + (size & 1)
+    limit = min(len(data), 8 + size + (size & 1))
+    i = 12
+    simple = data[12:16] in (b"VP8 ", b"VP8L")
+    while i + 8 <= limit and data[i:i + 4] in _WEBP_CHUNKS:
+        length, = struct.unpack("<I", data[i + 4:i + 8])
+        i = min(len(data), i + 8 + length + (length & 1))
+        if simple:
+            break
+    return i if i > 12 else None
 
 
 def _gif_end(data: bytes) -> int | None:
-    pos = data.rfind(b"\x3b")
-    return pos + 1 if pos != -1 else None
+    """Offset just past the GIF trailer byte, found by following the blocks.
+
+    A search for the last 0x3B in the file would take any appended data that ends in that
+    byte for part of the picture. Decoders stop at the trailer block, or at the first byte
+    that starts no block, and what follows either is not shown.
+    """
+    n = len(data)
+    if n < 13 or data[:3] != b"GIF":
+        return None
+    i = 13
+    if data[10] & 0x80:                             # global colour table
+        i += 3 << ((data[10] & 7) + 1)
+    while i < n:
+        block = data[i]
+        if block == 0x3B:                           # trailer
+            return i + 1
+        if block == 0x21:                           # extension: label, then sub-blocks
+            i += 2
+        elif block == 0x2C:                         # image: descriptor, colour table, code size
+            if i + 10 > n:
+                return None
+            flags = data[i + 9]
+            i += 10 + (3 << ((flags & 7) + 1) if flags & 0x80 else 0) + 1
+        else:
+            return i
+        while True:                                 # sub-blocks, closed by one of length zero
+            if i >= n:
+                return None
+            length = data[i]
+            i += 1 + length
+            if length == 0:
+                break
+    return None
 
 
 def sniff(blob: bytes) -> str:
@@ -314,7 +368,7 @@ def lsb_planes(arr: np.ndarray) -> Image.Image:
 
 def analyze_lsb(path: str | Path) -> LsbResult:
     """Steganalysis of the lowest bits of a lossless picture."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         if img.mode in ("1", "P", "I", "F", "I;16"):
             img = img.convert("RGB")
         elif img.mode == "LA":

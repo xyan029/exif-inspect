@@ -20,6 +20,8 @@ from dataclasses import dataclass
 
 from PIL import Image
 
+from . import jpegdct
+
 _APPLE = (b"hdrgainmap", b"HDRGainMap")
 _ULTRA_HDR = (b"hdrgm:", b"urn:iso:std:iso:ts:21496")
 
@@ -54,16 +56,14 @@ def _kind(blob: bytes) -> str:
 
 def _mpf_images(data: bytes) -> list[tuple[int, int]]:
     """(offset, size) of every image after the first, from the MPF segment."""
-    i = 2
-    while i + 4 <= len(data) and data[i] == 0xFF:
-        marker = data[i + 1]
-        if marker == 0xDA:
-            break
-        length, = struct.unpack(">H", data[i + 2:i + 4])
-        if marker == 0xE2 and data[i + 4:i + 8] == b"MPF\x00":
-            base = i + 8                         # offsets count from the TIFF header
-            tiff = data[base:i + 2 + length]
-            end = "<" if tiff[:2] == b"II" else ">"
+    for pos, marker, payload in jpegdct.walk(data).segments:
+        if marker != 0xE2 or payload[:4] != b"MPF\x00":
+            continue
+        base = pos + 8                           # offsets count from the TIFF header
+        tiff = payload[4:]
+        end = "<" if tiff[:2] == b"II" else ">"
+        out: list[tuple[int, int]] = []
+        try:
             ifd, = struct.unpack(end + "I", tiff[4:8])
             count, = struct.unpack(end + "H", tiff[ifd:ifd + 2])
             for k in range(count):
@@ -71,15 +71,15 @@ def _mpf_images(data: bytes) -> list[tuple[int, int]]:
                     end + "HHII", tiff[ifd + 2 + 12 * k:ifd + 14 + 12 * k])
                 if tag != 0xB002:
                     continue
-                out = []
                 for e in range(n // 16):
                     _attr, size, off, _d1, _d2 = struct.unpack(
                         end + "IIIHH", tiff[value + 16 * e:value + 16 * e + 16])
                     if off:                      # the first image has offset 0
                         out.append((base + off, size))
-                return out
-            return []
-        i += 2 + length
+                break
+        except struct.error:                     # the segment ends before the table does
+            pass
+        return out
     return []
 
 

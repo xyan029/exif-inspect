@@ -25,6 +25,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 QUALITIES = range(50, 101)       # qualities the region search works on
 EXTRA_LOW = 10                   # the whole-image curve starts this much lower, so a
                                  # dip near 50 still has a left shoulder to stand out from
@@ -215,7 +217,7 @@ def analyze(path: str | Path, qualities=QUALITIES, block: int = BLOCK,
     """Run the ghost analysis on one image file."""
     qualities = list(qualities)
     extra = [q for q in range(qualities[0] - EXTRA_LOW, qualities[0]) if q >= 1]
-    with Image.open(path) as img:
+    with opened(path) as img:
         fmt = img.format
         rgb = np.asarray(img.convert("RGB"))
         if rgb.shape[0] < 2 * block + 8 or rgb.shape[1] < 2 * block + 8:

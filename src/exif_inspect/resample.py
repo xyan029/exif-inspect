@@ -50,6 +50,8 @@ import numpy as np
 from numpy.lib.stride_tricks import sliding_window_view
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 TILE = 64               # tile for the map, in pixels; tiles overlap by half
 COARSE = (256, 128, 64)  # tile sizes tried for the whole-picture spectrum, largest first
 MIN_COARSE = 30         # tiles the whole-picture spectrum must average over
@@ -473,7 +475,7 @@ def _largest_component(mask: np.ndarray) -> np.ndarray:
 def analyze(path: str | Path) -> ResampleResult:
     """Look for resampling peaks and map which part of the picture carries them."""
     tile, step = TILE, TILE // 2
-    with Image.open(path) as img:
+    with opened(path) as img:
         rgb = np.asarray(img.convert("RGB"))
     h, w = rgb.shape[:2]
     if min(h, w) < 2 * tile:

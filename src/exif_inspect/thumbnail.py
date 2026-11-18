@@ -22,6 +22,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw, ImageFilter
 
+from .imagefile import opened
+
 SIDE = 160          # working size of the longest thumbnail side
 BLOCK = 8           # comparison block, in working pixels
 CROP_COVER = 0.9    # matched area below this share of the thumbnail = crop
@@ -225,7 +227,7 @@ def analyze(img: Image.Image) -> ThumbInfo | None:
 
 def render(path: str | Path) -> tuple[Image.Image, Image.Image] | None:
     """(thumbnail JPEG as stored, side-by-side picture) or None."""
-    with Image.open(path) as img:
+    with opened(path) as img:
         data = thumbnail_bytes(img.info.get("exif"))
         if data is None:
             return None

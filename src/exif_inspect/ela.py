@@ -18,6 +18,8 @@ from pathlib import Path
 
 from PIL import Image, ImageChops
 
+from .imagefile import opened
+
 # Anchor colours for a dark-to-bright heatmap (black -> purple -> orange -> yellow).
 _ANCHORS = [
     (0.00, (0, 0, 4)),
@@ -89,7 +91,7 @@ def run_ela(
     scale=None picks an amplification that maps the 99.5th percentile of the
     error to full brightness, so a few extreme pixels do not wash out the map.
     """
-    with Image.open(path) as img:
+    with opened(path) as img:
         fmt = img.format
         error = error_level(img, quality)
 
@@ -115,7 +117,7 @@ def run_ela(
 
 def side_by_side(original_path: str | Path, heatmap: Image.Image) -> Image.Image:
     """Original on the left, heatmap on the right."""
-    with Image.open(original_path) as img:
+    with opened(original_path) as img:
         left = img.convert("RGB")
     right = heatmap.convert("RGB").resize(left.size)
     canvas = Image.new("RGB", (left.width * 2, left.height), "white")

@@ -23,6 +23,8 @@ from pathlib import Path
 import numpy as np
 from PIL import Image, ImageDraw
 
+from .imagefile import opened
+
 from .extract import read_image
 from .thumbnail import _ncc_map
 
@@ -245,7 +247,7 @@ def compare(path_a: str | Path, path_b: str | Path) -> CompareResult:
         raise ValueError(f"{path_a}: {ra.error}")
     if rb.error:
         raise ValueError(f"{path_b}: {rb.error}")
-    with Image.open(path_a) as ia, Image.open(path_b) as ib:
+    with opened(path_a) as ia, opened(path_b) as ib:
         img_a, img_b = ia.convert("RGB"), ib.convert("RGB")
     p = place(img_a, img_b)
     changes, fraction, diff = [], 0.0, None
